@@ -1,16 +1,63 @@
 # CivicShield
 
+Secure incident reporting system for communities.
+
 ## Features
 
-- **Incident Reporting** — Create reports with title, description, category, location, and incident date
-- **Anonymous Reporting** — Submit reports without revealing identity to authorities
-- **Evidence Upload** — Attach images, PDFs, and videos with SHA-256 integrity verification
-- **Smart Auto-Routing** — Reports auto-assigned to departments based on admin-defined mapping rules
-- **Priority Scoring** — Rule-based priority (Low/Medium/High/Critical) using keywords and category rules
-- **Status Lifecycle** — Draft → Submitted → Under Review → Investigating → Resolved → Closed
-- **Draft Saving** — Save and resume reports before submission
-- **Tracking ID** — Unique ID generated on submission for tracking
-- **Comment Thread** — Real-time in-report communication between reporter and authority
+### Core Features (Sprint 1)
+1. **Incident report creation** with title and detailed description
+2. **Category selection** from system-defined categories
+3. **Report lifecycle and timeline**: 
+   - Anonymous-to-authority reporting option (authority sees "Anonymous Reporter" label)
+   - Evidence upload (image/PDF/video) with evidence list/preview
+   - Location tagging via manual address + map pin
+   - Incident date & time selection
+4. **Draft saving and later submission**
+5. **Tracking ID receipt** + status workflow tracking (Submitted → Under Review → Investigating → Resolved → Closed)
+6. **Reporter dashboard** (listing submitted reports with filters, Report detail page showing full report, evidence, status, and assigned department)
+
+### Authority Features
+7. **Authority Dashboard** (example: police, law, cyber, fire department etc.)
+8. **Comment thread** between authority and reporter (realtime, in-app)
+
+### Premium Features (Future Sprints)
+9. **Private chatting** (one to one)
+10. **Consultation & Payment Module**
+11. **Inter-Department Transfer** (authority)
+12. **Priority scoring** (Low/Medium/High/Critical) based on rule-based logic
+13. **Admin configuration Management**
+
+### Advanced Features (Future Sprints)
+14. **Reopen request System** (User request reopen within X days, limited attempts, timeline, authority review)
+15. **Service Level Agreement Tracking** (Each incident category has defined expected resolution time. Admin defines SLA rules)
+16. **Monthly trend analytics chart** (reports per month, filterable)
+17. **Compliance & Risk Dashboard** (Admin)
+18. **Authority onboarding and verification**
+19. **Duplicate report detection system**
+20. **Realtime Notification center** for status changes, new comments, and reopen decisions
+
+### Technical Stack
+- **Frontend**: React + Vite + TailwindCSS
+- **Backend**: Node.js + Express + PostgreSQL
+- **Authentication**: JWT-based auth system
+- **File Upload**: Multipart form data with evidence support
+
+## Setup
+1. Clone repository
+2. Install dependencies in `client/` and `server/`
+3. Configure database
+4. Run development servers
+
+## Branch Structure
+- `main`: Production-ready code
+- `dev-*`: Individual developer branches
+
+## Development Workflow
+1. Create feature branch from `main`
+2. Implement feature
+3. Test thoroughly
+4. Create pull request to `main`
+5. Code review and merge
 - **Private Chat** — One-to-one real-time messaging via Socket.io
 - **Reopen Requests** — Reporters can request case reopening with reason; authority approves/denies
 - **Notifications** — Real-time in-app notifications for status changes, comments, reopen decisions
