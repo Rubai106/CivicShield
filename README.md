@@ -2,9 +2,9 @@
 
 Secure incident reporting system for communities.
 
-## 🚀 Completed Features (Sprint 1)
+##  Completed Features (Sprint 1)
 
-### ✅ Core Features Implemented
+###  Core Features Implemented
 1. **Incident report creation** with title and detailed description
 2. **Category selection** from system-defined categories  
 3. **Report lifecycle and timeline**:
@@ -18,9 +18,8 @@ Secure incident reporting system for communities.
 
 ---
 
-## 📋 Complete Feature List (All Features)
+##  Complete Feature List (All Features)
 
-### 🏛️ Reporting & Core Features
 1. **Incident report creation** with title and detailed description
 2. **Category selection** from system-defined categories
 3. **Report lifecycle and timeline**:
@@ -31,26 +30,22 @@ Secure incident reporting system for communities.
 4. **Draft saving** and later submission
 5. **Tracking ID receipt** + Status workflow tracking (Submitted → Under Review → Investigating → Resolved → Closed)
 
-### 📊 Dashboards & Interfaces
 6. **Reporter dashboard** (listing submitted reports with filters, Report detail page showing full report, evidence, status, and assigned department)
 7. **Authority Dashboard** (example: police, law, cyber, fire department etc)
 8. **Comment thread** between authority and reporter (realtime, in-app)
 9. **Private chatting** (one to one)
 10. **Consultation & Payment Module**
 
-### 🔧 Advanced Features
+###  Advanced Features
 11. **Inter-Department Transfer** (authority)
 12. **Priority scoring** (Low/Medium/High/Critical) based on rule-based logic
 13. **Admin configuration Management**
     -Reopen request** for closed reports (request + approve/deny decision)
     -Automatic assignment** to department using admin-defined mapping rules
-
-### 📈 Analytics & Monitoring
 14. **Monthly trend analytics** chart (reports per month, filterable)
 15. **Compliance & Risk Dashboard** (Admin)
 16. **Service Level Agreement Tracking** (Each incident category has a defined expected resolution time. Admin defines SLA rules)
 
-### 🔒 Security & Verification
 17. **Digital Evidence Integrity Verification**
 18. **Authority onboarding and verification**
 19. **Reopen request System [User]** (This includes request reopen within X days, limited attempts, timeline, authority review)
