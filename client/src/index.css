@@ -1,0 +1,348 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+/* =========================
+   BASE
+========================= */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #020617;
+  color: #e2e8f0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+
+/* =========================
+   INPUTS
+========================= */
+
+input,
+textarea,
+select {
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #e2e8f0;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: #475569;
+}
+
+
+/* =========================
+   LABEL
+========================= */
+
+.label {
+  display: block;
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+
+/* =========================
+   CARD
+========================= */
+
+.card {
+  border: 1px solid #1e293b;
+  background: #020617;
+  border-radius: 8px;
+}
+
+.card-hover:hover {
+  border-color: #475569;
+}
+
+
+/* =========================
+   BUTTONS
+========================= */
+
+.btn-primary {
+  background: #1e293b;
+  color: white;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn-primary:hover {
+  background: #334155;
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: #020617;
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: white;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+}
+
+.btn-danger:hover {
+  background: #ef4444;
+}
+
+.btn-ghost {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.btn-ghost:hover {
+  color: white;
+}
+
+
+/* =========================
+   INPUT FIELD
+========================= */
+
+.input-field {
+  width: 100%;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #020617;
+  color: #e2e8f0;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #475569;
+}
+
+
+/* =========================
+   BADGES
+========================= */
+
+.badge-critical {
+  background: rgba(220,38,38,0.2);
+  color: #f87171;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.badge-high {
+  background: rgba(249,115,22,0.2);
+  color: #fb923c;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.badge-medium {
+  background: rgba(234,179,8,0.2);
+  color: #fde047;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.badge-low {
+  background: rgba(34,197,94,0.2);
+  color: #4ade80;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+
+/* =========================
+   STATUS
+========================= */
+
+.status-submitted { color: #60a5fa; }
+.status-under_review { color: #fde047; }
+.status-investigating { color: #fb923c; }
+.status-resolved { color: #4ade80; }
+.status-closed { color: #94a3b8; }
+.status-draft { color: #94a3b8; }
+
+
+/* =========================
+   SIDEBAR
+========================= */
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  color: #94a3b8;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar-item:hover {
+  background: #020617;
+  color: white;
+}
+
+.sidebar-item.active {
+  background: #020617;
+  color: white;
+}
+
+
+/* =========================
+   TABLE
+========================= */
+
+.table-row {
+  border-bottom: 1px solid #1e293b;
+}
+
+.table-row:hover {
+  background: #020617;
+}
+
+
+/* =========================
+   HEADERS
+========================= */
+
+.section-header {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.section-subtitle {
+  font-size: 14px;
+  color: #94a3b8;
+  margin-bottom: 20px;
+}
+
+
+/* =========================
+   CHAT
+========================= */
+
+.message-sent {
+  background: #1e293b;
+  color: white;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.message-received {
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+
+/* =========================
+   SCROLLBAR
+========================= */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+
+/* =========================
+   SPINNER
+========================= */
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* =========================
+   GLASS EFFECT
+========================= */
+
+.glass {
+  background: rgba(2, 6, 23, 0.8);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* =========================
+   PAGE ANIMATIONS
+========================= */
+
+.page-enter {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* =========================
+   NOTIFICATION
+========================= */
+
+.notification-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  background: red;
+  border-radius: 50%;
+}
