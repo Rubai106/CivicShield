@@ -1,5 +1,3 @@
--- CivicShield Schema
-
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   name VARCHAR(150) NOT NULL,
