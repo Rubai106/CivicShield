@@ -6,7 +6,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 // All admin routes require authentication and admin role
 router.use(authenticate, authorize('admin'));
 
-// ===================== DASHBOARD STATS =====================
+// ===================== DASHBOARD STATS ====================
 router.get('/stats', async (req, res) => {
   try {
     const [totalReports, openReports, resolvedReports, closedReports, totalUsers, slaBreached] = await Promise.all([
