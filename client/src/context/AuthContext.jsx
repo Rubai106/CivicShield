@@ -11,7 +11,6 @@ export const AuthProvider = ({ children }) => {
   const loadUser = useCallback(async () => {
     const token = localStorage.getItem('cs_token');
     if (!token) { setLoading(false); return; }
-
     try {
       const { data } = await authAPI.getMe();
       setUser(data.data.user);
@@ -36,6 +35,12 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (formData) => {
     const { data } = await authAPI.register(formData);
+
+    // Authority accounts return pendingApproval — no token, no login
+    if (data.data?.pendingApproval) {
+      return { pendingApproval: true };
+    }
+
     const { user, token } = data.data;
     localStorage.setItem('cs_token', token);
     localStorage.setItem('cs_user', JSON.stringify(user));
@@ -55,15 +60,13 @@ export const AuthProvider = ({ children }) => {
     localStorage.setItem('cs_user', JSON.stringify({ ...user, ...updatedUser }));
   };
 
-  const isAdmin = user?.role === 'admin';
-  const isAuthority = user?.role === 'authority';
-  const isReporter = user?.role === 'reporter';
-
   return (
     <AuthContext.Provider value={{
       user, loading,
       login, register, logout, updateUser, loadUser,
-      isAdmin, isAuthority, isReporter,
+      isAdmin: user?.role === 'admin',
+      isAuthority: user?.role === 'authority',
+      isReporter: user?.role === 'reporter',
       token: localStorage.getItem('cs_token'),
     }}>
       {children}
@@ -76,5 +79,3 @@ export const useAuth = () => {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 };
-
-// AuthContext already exported above - this is a patch for refreshUser usage
