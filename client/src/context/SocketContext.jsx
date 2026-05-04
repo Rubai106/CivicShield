@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 
@@ -29,8 +29,16 @@ export const SocketProvider = ({ children }) => {
     return () => { s.disconnect(); };
   }, [user?.id]);
 
+  // Stable event-listener helper: registers listener and returns a cleanup function.
+  // NotificationCenter and other consumers call: const cleanup = on('event', cb);
+  const on = useCallback((event, cb) => {
+    if (!socket) return () => {};
+    socket.on(event, cb);
+    return () => socket.off(event, cb);
+  }, [socket]);
+
   return (
-    <SocketContext.Provider value={{ socket }}>
+    <SocketContext.Provider value={{ socket, on }}>
       {children}
     </SocketContext.Provider>
   );
