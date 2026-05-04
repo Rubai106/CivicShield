@@ -1,606 +1,390 @@
 const express = require('express');
+const path = require('path');
 const router = express.Router();
-const { query } = require('../config/db');
+const { query, pool } = require('../config/db');
 const { authenticate, authorize, canAccessReport } = require('../middleware/auth');
 const { upload } = require('../config/cloudinary');
-const {
-  generateTrackingId, calculatePriority, autoAssignDepartment,
-  calculateSLADeadline, createNotification, addTimeline,
-  checkDuplicates, paginate, computeFileHash
-} = require('../utils/helpers');
-const crypto = require('crypto');
+const { generateTrackingId, autoAssignDepartment, paginate } = require('../utils/helpers');
 
-// GET /api/reports - Reporter's own reports (or authority's dept reports)
+// ── GET all reports (role-filtered) ──────────────────────────────────────────
 router.get('/', authenticate, async (req, res) => {
   try {
-    const { page = 1, limit = 10, status, category_id, priority, search } = req.query;
+    const { page = 1, limit = 10, category_id, search, status } = req.query;
     const { offset, limit: lim } = paginate(page, limit);
     const user = req.user;
-
-    let whereClause = '';
-    let params = [];
-    let paramIdx = 1;
+    const params = [];
+    let where = '';
 
     if (user.role === 'reporter') {
-      whereClause = `WHERE r.reporter_id = $${paramIdx++}`;
+      where = `WHERE r.reporter_id = $1`;
       params.push(user.id);
     } else if (user.role === 'authority') {
-      const profileResult = await query(
-        'SELECT department_id FROM authority_profiles WHERE user_id = $1',
-        [user.id]
-      );
-      const deptId = profileResult.rows[0]?.department_id;
-      if (!deptId) return res.json({ success: true, data: { reports: [], total: 0 } });
-      whereClause = `WHERE r.assigned_department_id = $${paramIdx++} AND r.is_draft = false`;
-      params.push(deptId);
-    } else if (user.role === 'admin') {
-      whereClause = 'WHERE 1=1';
+      where = `WHERE r.is_draft = false`;
+    } else {
+      where = 'WHERE 1=1';
     }
 
-    if (status) {
-      whereClause += ` AND r.status = $${paramIdx++}`;
-      params.push(status);
-    }
-    if (category_id) {
-      whereClause += ` AND r.category_id = $${paramIdx++}`;
-      params.push(category_id);
-    }
-    if (priority) {
-      whereClause += ` AND r.priority = $${paramIdx++}`;
-      params.push(priority);
-    }
+    let idx = params.length + 1;
+    if (category_id) { where += ` AND r.category_id = $${idx++}`; params.push(category_id); }
+    if (status)      { where += ` AND r.status = $${idx++}`;      params.push(status); }
     if (search) {
-      whereClause += ` AND (r.title ILIKE $${paramIdx} OR r.tracking_id ILIKE $${paramIdx})`;
+      where += ` AND (r.title ILIKE $${idx} OR r.tracking_id ILIKE $${idx})`;
       params.push(`%${search}%`);
-      paramIdx++;
+      idx++;
     }
 
-    // Hide draft reports from authorities/admin in listing unless admin
-    if (user.role === 'authority') {
-      whereClause += ' AND r.is_draft = false';
-    }
-
-    const countResult = await query(
-      `SELECT COUNT(*) FROM reports r ${whereClause}`,
-      params
-    );
-    const total = parseInt(countResult.rows[0].count);
+    const totalResult = await query(`SELECT COUNT(*) FROM reports r ${where}`, params);
+    const total = parseInt(totalResult.rows[0].count, 10);
 
     const result = await query(
-      `SELECT r.*, c.name AS category_name, c.icon AS category_icon,
+      `SELECT r.id, r.tracking_id, r.title, r.status, r.is_draft, r.priority,
+              r.incident_date, r.location_text, r.created_at, r.submitted_at,
+              r.reporter_id, r.is_anonymous,
+              c.name AS category_name,
               d.name AS department_name,
-              CASE WHEN r.is_anonymous THEN NULL ELSE u.name END AS reporter_name,
-              CASE WHEN r.is_anonymous THEN NULL ELSE u.email END AS reporter_email,
-              (SELECT COUNT(*) FROM evidence WHERE report_id = r.id) AS evidence_count,
-              (SELECT COUNT(*) FROM comments WHERE report_id = r.id AND is_deleted = false) AS comment_count
+              CASE WHEN $${params.length + 1} = 'authority' AND r.is_anonymous THEN 'Anonymous'
+                   ELSE u.name END AS reporter_name,
+              (SELECT COUNT(*) FROM evidence e WHERE e.report_id = r.id) AS evidence_count
        FROM reports r
-       LEFT JOIN categories c ON r.category_id = c.id
-       LEFT JOIN departments d ON r.assigned_department_id = d.id
-       LEFT JOIN users u ON r.reporter_id = u.id
-       ${whereClause}
+       LEFT JOIN categories c ON c.id = r.category_id
+       LEFT JOIN departments d ON d.id = r.assigned_department_id
+       LEFT JOIN users u ON u.id = r.reporter_id
+       ${where}
        ORDER BY r.created_at DESC
-       LIMIT $${paramIdx++} OFFSET $${paramIdx++}`,
-      [...params, lim, offset]
+       LIMIT $${params.length + 2} OFFSET $${params.length + 3}`,
+      [...params, user.role, lim, offset]
     );
 
-    res.json({
+    return res.json({
       success: true,
-      data: {
-        reports: result.rows,
-        total,
-        page: parseInt(page),
-        limit: lim,
-        totalPages: Math.ceil(total / lim),
-      }
+      data: { reports: result.rows, total, page: parseInt(page), limit: lim, totalPages: Math.ceil(total / lim) },
     });
   } catch (error) {
     console.error('Get reports error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch reports.' });
+    return res.status(500).json({ success: false, message: 'Failed to fetch reports.' });
   }
 });
 
-// POST /api/reports - Create new report (draft or submit)
-router.post('/', authenticate, authorize('reporter'), async (req, res) => {
+// ── POST create report ────────────────────────────────────────────────────────
+router.post('/', authenticate, authorize('reporter'), upload.any(), async (req, res) => {
   try {
     const {
-      title, description, category_id, is_anonymous = false,
-      location_text, latitude, longitude, incident_date,
-      is_draft = true
+      title = '', description = '', category_id,
+      is_anonymous = 'false', incident_date,
+      location_text, location_lat, location_lng,
+      is_draft = 'false',
     } = req.body;
 
-    if (!title) {
-      return res.status(400).json({ success: false, message: 'Title is required.' });
+    const isDraft = String(is_draft) === 'true';
+
+    if (!isDraft && (!title.trim() || !description.trim() || !category_id)) {
+      return res.status(400).json({ success: false, message: 'Title, description, and category are required.' });
     }
 
+    const isAnon = String(is_anonymous) === 'true';
     const trackingId = generateTrackingId();
-    let priority = 'medium';
-    let assignedDeptId = null;
-    let slaDeadline = null;
+    const deptResult = await autoAssignDepartment(category_id);
+    const assignedDeptId = deptResult?.departmentId || null;
 
-    if (!is_draft) {
-      if (!description || !category_id) {
-        return res.status(400).json({ success: false, message: 'Description and category are required for submission.' });
-      }
-      priority = await calculatePriority(category_id, title, description);
-      assignedDeptId = await autoAssignDepartment(category_id);
-      slaDeadline = await calculateSLADeadline(category_id, priority);
-    }
-
-    const status = is_draft ? 'draft' : 'submitted';
-
-    const result = await query(
+    const created = await query(
       `INSERT INTO reports (
         tracking_id, title, description, category_id, reporter_id,
-        is_anonymous, location_text, latitude, longitude, incident_date,
-        status, priority, assigned_department_id, is_draft, sla_deadline, submitted_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+        is_anonymous, incident_date, location_text, location_lat, location_lng,
+        status, is_draft, assigned_department_id, submitted_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       RETURNING *`,
       [
-        trackingId, title, description || '', category_id || null, req.user.id,
-        is_anonymous, location_text || null, latitude || null, longitude || null,
-        incident_date || null, status, priority, assignedDeptId, is_draft,
-        slaDeadline, is_draft ? null : new Date()
+        trackingId, title, description, category_id || null, req.user.id,
+        isAnon, incident_date || null, location_text || null,
+        location_lat || null, location_lng || null,
+        isDraft ? 'Draft' : 'Submitted', isDraft,
+        assignedDeptId, isDraft ? null : new Date(),
       ]
     );
 
-    const report = result.rows[0];
+    const report = created.rows[0];
 
-    if (!is_draft) {
-      await addTimeline(report.id, 'Report Submitted', req.user.id, 'reporter', 'Report submitted for review');
+    // Record initial status in history
+    await query(
+      `INSERT INTO report_status_history (report_id, from_status, to_status, changed_by)
+       VALUES ($1, NULL, $2, $3)`,
+      [report.id, report.status, req.user.id]
+    ).catch(() => {}); // non-fatal if table doesn't exist yet
 
-      // Check for duplicates
-      const duplicates = await checkDuplicates(report.id, title, description || '', category_id);
-      if (duplicates.length > 0) {
-        const topDup = duplicates[0];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const isUrl = typeof file.path === 'string' && file.path.startsWith('http');
+        const fileUrl = isUrl
+          ? file.path
+          : `${req.protocol}://${req.get('host')}/uploads/${file.filename || path.basename(file.path)}`;
         await query(
-          'UPDATE reports SET duplicate_of = $1, similarity_score = $2 WHERE id = $3',
-          [topDup.id, topDup.score, report.id]
+          `INSERT INTO evidence (report_id, file_url, file_name, file_type, file_size, public_id)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [report.id, fileUrl, file.originalname, file.mimetype, file.size, file.filename || file.public_id || null]
         );
-        for (const dup of duplicates) {
-          await query(
-            'INSERT INTO duplicate_checks (report_id, potential_duplicate_id, similarity_score) VALUES ($1, $2, $3)',
-            [report.id, dup.id, dup.score]
-          );
-        }
       }
-
-      // Notify assigned department authority if exists
-      if (assignedDeptId) {
-        const authUsers = await query(
-          `SELECT u.id FROM users u
-           JOIN authority_profiles ap ON u.id = ap.user_id
-           WHERE ap.department_id = $1 AND ap.is_verified = true`,
-          [assignedDeptId]
-        );
-        for (const authUser of authUsers.rows) {
-          await createNotification(
-            authUser.id,
-            'New Report Assigned',
-            `A new ${priority} priority report has been assigned to your department: "${title}"`,
-            'assignment',
-            report.id
-          );
-        }
-      }
-    } else {
-      await addTimeline(report.id, 'Draft Created', req.user.id, 'reporter', 'Report saved as draft');
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: is_draft ? 'Draft saved successfully.' : 'Report submitted successfully.',
-      data: { report }
+      message: isDraft ? 'Draft saved.' : 'Report submitted successfully.',
+      data: { report },
     });
   } catch (error) {
     console.error('Create report error:', error);
-    res.status(500).json({ success: false, message: 'Failed to create report.' });
+    return res.status(500).json({ success: false, message: 'Failed to create report.' });
   }
 });
 
-// GET /api/reports/:id - Get single report
+// ── GET single report ─────────────────────────────────────────────────────────
 router.get('/:id', authenticate, canAccessReport, async (req, res) => {
   try {
-    const report = req.report;
-
-    // Increment view count
-    await query('UPDATE reports SET view_count = view_count + 1 WHERE id = $1', [report.id]);
-
-    // Fetch full details
-    const fullReport = await query(
+    const full = await query(
       `SELECT r.*,
-              c.name AS category_name, c.icon AS category_icon, c.description AS category_description,
-              d.name AS department_name, d.icon AS department_icon, d.contact_email AS dept_email,
-              CASE WHEN r.is_anonymous AND $2 = 'authority' THEN 'Anonymous Reporter'
-                   WHEN r.is_anonymous AND $2 = 'reporter' THEN u.name
+              c.name AS category_name,
+              d.name AS department_name,
+              CASE WHEN r.is_anonymous AND $2 = 'authority' THEN 'Anonymous'
                    ELSE u.name END AS reporter_name,
-              CASE WHEN r.is_anonymous AND $2 = 'authority' THEN NULL ELSE u.email END AS reporter_email,
-              u.phone AS reporter_phone,
-              aa.name AS assigned_authority_name
+              CASE WHEN r.is_anonymous AND $2 = 'authority' THEN NULL
+                   ELSE u.email END AS reporter_email
        FROM reports r
-       LEFT JOIN categories c ON r.category_id = c.id
-       LEFT JOIN departments d ON r.assigned_department_id = d.id
-       LEFT JOIN users u ON r.reporter_id = u.id
-       LEFT JOIN users aa ON r.assigned_authority_id = aa.id
+       LEFT JOIN categories c ON c.id = r.category_id
+       LEFT JOIN departments d ON d.id = r.assigned_department_id
+       LEFT JOIN users u ON u.id = r.reporter_id
        WHERE r.id = $1`,
-      [report.id, req.user.role]
+      [req.params.id, req.user.role]
     );
+
+    if (!full.rows[0]) return res.status(404).json({ success: false, message: 'Report not found.' });
 
     const evidence = await query(
       'SELECT * FROM evidence WHERE report_id = $1 ORDER BY uploaded_at DESC',
-      [report.id]
+      [req.params.id]
     );
 
-    const timeline = await query(
-      `SELECT rt.*, u.name AS actor_name, u.role AS actor_role
-       FROM report_timeline rt
-       LEFT JOIN users u ON rt.actor_id = u.id
-       WHERE rt.report_id = $1
-       ORDER BY rt.created_at ASC`,
-      [report.id]
-    );
+    const history = await query(
+      `SELECT rsh.*, u.name AS changed_by_name
+       FROM report_status_history rsh
+       LEFT JOIN users u ON u.id = rsh.changed_by
+       WHERE rsh.report_id = $1 ORDER BY rsh.created_at ASC`,
+      [req.params.id]
+    ).catch(() => ({ rows: [] }));
 
-    const reopenRequests = await query(
-      `SELECT rr.*, u.name AS reporter_name, da.name AS decided_by_name
-       FROM reopen_requests rr
-       LEFT JOIN users u ON rr.reporter_id = u.id
-       LEFT JOIN users da ON rr.decided_by = da.id
-       WHERE rr.report_id = $1
-       ORDER BY rr.requested_at DESC`,
-      [report.id]
-    );
-
-    res.json({
-      success: true,
-      data: {
-        report: fullReport.rows[0],
-        evidence: evidence.rows,
-        timeline: timeline.rows,
-        reopenRequests: reopenRequests.rows,
-      }
-    });
+    return res.json({ success: true, data: { report: full.rows[0], evidence: evidence.rows, history: history.rows } });
   } catch (error) {
     console.error('Get report error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch report.' });
+    return res.status(500).json({ success: false, message: 'Failed to fetch report.' });
   }
 });
 
-// PUT /api/reports/:id - Update report (draft editing)
-router.put('/:id', authenticate, authorize('reporter'), async (req, res) => {
+// ── PUT update report (edit/resubmit draft) ───────────────────────────────────
+router.put('/:id', authenticate, authorize('reporter'), upload.any(), async (req, res) => {
   try {
-    const { id } = req.params;
-    const report = await query('SELECT * FROM reports WHERE id = $1 AND reporter_id = $2', [id, req.user.id]);
+    const {
+      title = '', description = '', category_id,
+      is_anonymous = 'false', incident_date,
+      location_text, location_lat, location_lng,
+      is_draft = 'false', existing_file_ids = '[]',
+    } = req.body;
 
-    if (!report.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
-    }
+    const isDraft = String(is_draft) === 'true';
+    const isAnon = String(is_anonymous) === 'true';
+    const existingFileIds = JSON.parse(existing_file_ids);
 
-    if (!report.rows[0].is_draft) {
-      return res.status(400).json({ success: false, message: 'Only draft reports can be edited.' });
-    }
-
-    const { title, description, category_id, is_anonymous, location_text, latitude, longitude, incident_date } = req.body;
-
-    const result = await query(
-      `UPDATE reports SET
-        title = COALESCE($1, title),
-        description = COALESCE($2, description),
-        category_id = COALESCE($3, category_id),
-        is_anonymous = COALESCE($4, is_anonymous),
-        location_text = COALESCE($5, location_text),
-        latitude = COALESCE($6, latitude),
-        longitude = COALESCE($7, longitude),
-        incident_date = COALESCE($8, incident_date),
-        updated_at = NOW()
-       WHERE id = $9 RETURNING *`,
-      [title, description, category_id, is_anonymous, location_text, latitude, longitude, incident_date, id]
-    );
-
-    await addTimeline(id, 'Draft Updated', req.user.id, 'reporter', 'Report draft was updated');
-
-    res.json({ success: true, data: { report: result.rows[0] } });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to update report.' });
-  }
-});
-
-// POST /api/reports/:id/submit - Submit a draft
-router.post('/:id/submit', authenticate, authorize('reporter'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const reportResult = await query('SELECT * FROM reports WHERE id = $1 AND reporter_id = $2', [id, req.user.id]);
-
-    if (!reportResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
-    }
-
-    const report = reportResult.rows[0];
-    if (!report.is_draft) {
-      return res.status(400).json({ success: false, message: 'Report already submitted.' });
-    }
-
-    if (!report.description || !report.category_id) {
-      return res.status(400).json({ success: false, message: 'Description and category are required.' });
-    }
-
-    const priority = await calculatePriority(report.category_id, report.title, report.description);
-    const assignedDeptId = await autoAssignDepartment(report.category_id);
-    const slaDeadline = await calculateSLADeadline(report.category_id, priority);
-
-    const result = await query(
-      `UPDATE reports SET is_draft = false, status = 'submitted', priority = $1,
-       assigned_department_id = $2, sla_deadline = $3, submitted_at = NOW(), updated_at = NOW()
-       WHERE id = $4 RETURNING *`,
-      [priority, assignedDeptId, slaDeadline, id]
-    );
-
-    await addTimeline(id, 'Report Submitted', req.user.id, 'reporter', 'Draft submitted for review');
-
-    const duplicates = await checkDuplicates(id, report.title, report.description, report.category_id);
-    if (duplicates.length > 0) {
-      await query('UPDATE reports SET duplicate_of = $1, similarity_score = $2 WHERE id = $3',
-        [duplicates[0].id, duplicates[0].score, id]);
-    }
-
-    res.json({
-      success: true,
-      message: 'Report submitted successfully.',
-      data: { report: result.rows[0] }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to submit report.' });
-  }
-});
-
-// PUT /api/reports/:id/status - Update report status (authority/admin)
-router.put('/:id/status', authenticate, authorize('authority', 'admin'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, notes } = req.body;
-
-    const validStatuses = ['under_review', 'investigating', 'resolved', 'closed'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, message: 'Invalid status.' });
-    }
-
-    const reportResult = await query('SELECT * FROM reports WHERE id = $1', [id]);
-    if (!reportResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
-    }
-
-    const report = reportResult.rows[0];
-    const oldStatus = report.status;
-
-    // Check authority has access to this report's department
-    if (req.user.role === 'authority') {
-      const profile = await query('SELECT department_id FROM authority_profiles WHERE user_id = $1', [req.user.id]);
-      if (!profile.rows[0] || profile.rows[0].department_id !== report.assigned_department_id) {
-        return res.status(403).json({ success: false, message: 'Not authorized for this department.' });
-      }
-    }
-
-    const updateFields = { status, updated_at: new Date() };
-    if (status === 'resolved') updateFields.resolved_at = new Date();
-    if (status === 'closed') updateFields.closed_at = new Date();
-
-    await query(
-      `UPDATE reports SET status = $1, resolved_at = CASE WHEN $1 = 'resolved' THEN NOW() ELSE resolved_at END,
-       closed_at = CASE WHEN $1 = 'closed' THEN NOW() ELSE closed_at END, updated_at = NOW()
-       WHERE id = $2`,
-      [status, id]
-    );
-
-    await addTimeline(id, `Status Changed to ${status.replace('_', ' ').toUpperCase()}`,
-      req.user.id, req.user.role, notes, oldStatus, status);
-
-    // Notify reporter
-    if (report.reporter_id) {
-      await createNotification(
-        report.reporter_id,
-        'Report Status Updated',
-        `Your report "${report.title}" (${report.tracking_id}) status changed to: ${status.replace('_', ' ')}. ${notes || ''}`,
-        'status_change',
-        id
-      );
-    }
-
-    res.json({ success: true, message: `Status updated to ${status}.` });
-  } catch (error) {
-    console.error('Update status error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update status.' });
-  }
-});
-
-// PUT /api/reports/:id/assign - Reassign department (authority/admin)
-router.put('/:id/assign', authenticate, authorize('authority', 'admin'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { department_id, authority_id, notes } = req.body;
-
-    const reportResult = await query('SELECT * FROM reports WHERE id = $1', [id]);
-    if (!reportResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
-    }
-
-    const report = reportResult.rows[0];
-
-    await query(
-      `UPDATE reports SET assigned_department_id = COALESCE($1, assigned_department_id),
-       assigned_authority_id = COALESCE($2, assigned_authority_id), updated_at = NOW()
-       WHERE id = $3`,
-      [department_id, authority_id, id]
-    );
-
-    const actionNote = department_id ? `Transferred to new department` : 'Authority assigned';
-    await addTimeline(id, 'Assignment Updated', req.user.id, req.user.role, notes || actionNote,
-      report.assigned_department_id, department_id);
-
-    // Notify reporter
-    if (report.reporter_id) {
-      await createNotification(
-        report.reporter_id,
-        'Report Reassigned',
-        `Your report has been transferred to another department for better handling.`,
-        'assignment',
-        id
-      );
-    }
-
-    res.json({ success: true, message: 'Assignment updated.' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to update assignment.' });
-  }
-});
-
-// POST /api/reports/:id/evidence - Upload evidence
-router.post('/:id/evidence', authenticate, authorize('reporter', 'authority', 'admin'), upload.array('files', 10), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const reportResult = await query('SELECT * FROM reports WHERE id = $1', [id]);
-    if (!reportResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
-    }
-
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ success: false, message: 'No files uploaded.' });
-    }
-
-    const uploadedEvidence = [];
-    for (const file of req.files) {
-      const verificationHash = crypto.createHash('sha256')
-        .update(file.originalname + file.size + Date.now())
-        .digest('hex');
-
-      const result = await query(
-        `INSERT INTO evidence (report_id, file_url, file_name, file_type, file_size, public_id, uploaded_by, verification_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [id, file.path, file.originalname, file.mimetype, file.size,
-         file.filename || file.public_id, req.user.id, verificationHash]
-      );
-      uploadedEvidence.push(result.rows[0]);
-    }
-
-    await addTimeline(id, `${req.files.length} Evidence File(s) Uploaded`, req.user.id, req.user.role);
-
-    res.status(201).json({ success: true, message: 'Evidence uploaded.', data: { evidence: uploadedEvidence } });
-  } catch (error) {
-    console.error('Upload evidence error:', error);
-    res.status(500).json({ success: false, message: 'Failed to upload evidence.' });
-  }
-});
-
-// POST /api/reports/:id/reopen - Request reopen
-router.post('/:id/reopen', authenticate, authorize('reporter'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { reason } = req.body;
-
-    if (!reason) {
-      return res.status(400).json({ success: false, message: 'Reason is required.' });
-    }
-
-    const reportResult = await query(
+    const reportCheck = await query(
       'SELECT * FROM reports WHERE id = $1 AND reporter_id = $2',
-      [id, req.user.id]
+      [req.params.id, req.user.id]
     );
-    if (!reportResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Report not found.' });
+    if (!reportCheck.rows[0]) return res.status(404).json({ success: false, message: 'Report not found.' });
+
+    if (!isDraft && (!title.trim() || !description.trim() || !category_id)) {
+      return res.status(400).json({ success: false, message: 'Title, description, and category are required.' });
     }
 
-    const report = reportResult.rows[0];
-    if (report.status !== 'closed' && report.status !== 'resolved') {
-      return res.status(400).json({ success: false, message: 'Only closed or resolved reports can be reopened.' });
-    }
+    const deptResult = await autoAssignDepartment(category_id);
+    const assignedDeptId = deptResult?.departmentId || null;
+    const submittedAt = isDraft ? null : (reportCheck.rows[0].submitted_at || new Date());
 
-    // Check attempt limit (max 3)
-    const attempts = await query(
-      'SELECT COUNT(*) FROM reopen_requests WHERE report_id = $1',
-      [id]
-    );
-    if (parseInt(attempts.rows[0].count) >= 3) {
-      return res.status(400).json({ success: false, message: 'Maximum reopen attempts (3) reached.' });
-    }
-
-    const attemptNumber = parseInt(attempts.rows[0].count) + 1;
-
-    const result = await query(
-      `INSERT INTO reopen_requests (report_id, reporter_id, reason, attempt_number)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [id, req.user.id, reason, attemptNumber]
+    const updated = await query(
+      `UPDATE reports SET
+        title=$1, description=$2, category_id=$3, is_anonymous=$4,
+        incident_date=$5, location_text=$6, location_lat=$7, location_lng=$8,
+        status=$9, is_draft=$10, assigned_department_id=$11, submitted_at=$12,
+        updated_at=NOW()
+       WHERE id=$13 AND reporter_id=$14 RETURNING *`,
+      [
+        title, description, category_id || null, isAnon,
+        incident_date || null, location_text || null, location_lat || null, location_lng || null,
+        isDraft ? 'Draft' : 'Submitted', isDraft,
+        assignedDeptId, submittedAt,
+        req.params.id, req.user.id,
+      ]
     );
 
-    await addTimeline(id, 'Reopen Requested', req.user.id, 'reporter', reason);
+    const report = updated.rows[0];
 
-    // Notify authority
-    if (report.assigned_department_id) {
-      const authorities = await query(
-        `SELECT u.id FROM users u JOIN authority_profiles ap ON u.id = ap.user_id
-         WHERE ap.department_id = $1 AND ap.is_verified = true`,
-        [report.assigned_department_id]
+    // Clean up removed files
+    if (existingFileIds.length > 0) {
+      await query(
+        `DELETE FROM evidence WHERE report_id = $1 AND id NOT IN (${existingFileIds.map((_, i) => `$${i + 2}`).join(',')})`,
+        [req.params.id, ...existingFileIds]
       );
-      for (const auth of authorities.rows) {
-        await createNotification(
-          auth.id,
-          'Reopen Request Received',
-          `Reporter has requested to reopen report "${report.title}". Reason: ${reason}`,
-          'reopen_decision',
-          id
+    } else {
+      await query('DELETE FROM evidence WHERE report_id = $1', [req.params.id]);
+    }
+
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const isUrl = typeof file.path === 'string' && file.path.startsWith('http');
+        const fileUrl = isUrl
+          ? file.path
+          : `${req.protocol}://${req.get('host')}/uploads/${file.filename || path.basename(file.path)}`;
+        await query(
+          `INSERT INTO evidence (report_id, file_url, file_name, file_type, file_size, public_id)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [report.id, fileUrl, file.originalname, file.mimetype, file.size, file.filename || null]
         );
       }
     }
 
-    res.status(201).json({ success: true, message: 'Reopen request submitted.', data: { request: result.rows[0] } });
+    return res.json({
+      success: true,
+      message: isDraft ? 'Draft updated.' : 'Report submitted successfully.',
+      data: { report },
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to submit reopen request.' });
+    console.error('Update report error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update report.' });
   }
 });
 
-// PUT /api/reports/:id/reopen/:requestId - Decide on reopen request (authority/admin)
-router.put('/:id/reopen/:requestId', authenticate, authorize('authority', 'admin'), async (req, res) => {
+// ── PATCH status (authority) ──────────────────────────────────────────────────
+router.patch('/:id/status', authenticate, authorize('authority', 'admin'), async (req, res) => {
   try {
-    const { id, requestId } = req.params;
-    const { decision, response } = req.body;
+    const { status, note } = req.body;
+    const validStatuses = ['Submitted', 'Under Review', 'Investigating', 'Resolved', 'Closed'];
 
-    if (!['approved', 'denied'].includes(decision)) {
-      return res.status(400).json({ success: false, message: 'Decision must be approved or denied.' });
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status value.' });
     }
 
-    const reqResult = await query('SELECT * FROM reopen_requests WHERE id = $1 AND report_id = $2', [requestId, id]);
-    if (!reqResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'Reopen request not found.' });
+    const reportResult = await query('SELECT status FROM reports WHERE id = $1', [req.params.id]);
+    if (!reportResult.rows[0]) return res.status(404).json({ success: false, message: 'Report not found.' });
+
+    const currentStatus = reportResult.rows[0].status;
+    const validTransitions = {
+      'Submitted': ['Under Review'],
+      'Under Review': ['Investigating'],
+      'Investigating': ['Resolved'],
+      'Resolved': ['Closed'],
+      'Closed': [],
+      'Draft': [],
+    };
+
+    if (!validTransitions[currentStatus]?.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot transition from "${currentStatus}" to "${status}".`,
+      });
     }
 
-    await query(
-      `UPDATE reopen_requests SET status = $1, authority_response = $2, decided_by = $3, decided_at = NOW()
-       WHERE id = $4`,
-      [decision, response, req.user.id, requestId]
+    const resolvedAt = status === 'Resolved' ? new Date() : null;
+
+    const updated = await query(
+      `UPDATE reports SET status=$1, updated_at=NOW()
+       ${resolvedAt ? ', resolved_at=$3' : ''}
+       WHERE id=$2 RETURNING *`,
+      resolvedAt ? [status, req.params.id, resolvedAt] : [status, req.params.id]
     );
 
-    if (decision === 'approved') {
-      await query(
-        `UPDATE reports SET status = 'investigating', updated_at = NOW() WHERE id = $1`,
-        [id]
-      );
-      await addTimeline(id, 'Report Reopened', req.user.id, req.user.role, response);
-    } else {
-      await addTimeline(id, 'Reopen Request Denied', req.user.id, req.user.role, response);
-    }
+    // Record status change in history
+    await query(
+      `INSERT INTO report_status_history (report_id, from_status, to_status, changed_by, note)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [req.params.id, currentStatus, status, req.user.id, note || null]
+    ).catch(() => {});
 
-    const reportResult = await query('SELECT reporter_id, title FROM reports WHERE id = $1', [id]);
-    const report = reportResult.rows[0];
-
-    if (report.reporter_id) {
-      await createNotification(
-        report.reporter_id,
-        `Reopen Request ${decision.charAt(0).toUpperCase() + decision.slice(1)}`,
-        `Your request to reopen "${report.title}" has been ${decision}. ${response || ''}`,
-        'reopen_decision',
-        id
-      );
-    }
-
-    res.json({ success: true, message: `Reopen request ${decision}.` });
+    return res.json({ success: true, message: `Status updated to "${status}".`, data: { report: updated.rows[0] } });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to process reopen request.' });
+    console.error('Update status error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update status.' });
+  }
+});
+
+// ── PATCH reassign department (authority / admin) ─────────────────────────────
+router.patch('/:id/reassign', authenticate, authorize('authority', 'admin'), async (req, res) => {
+  try {
+    const { department_id, note } = req.body;
+    if (!department_id) {
+      return res.status(400).json({ success: false, message: 'department_id is required.' });
+    }
+
+    const reportResult = await query('SELECT * FROM reports WHERE id = $1', [req.params.id]);
+    if (!reportResult.rows[0]) {
+      return res.status(404).json({ success: false, message: 'Report not found.' });
+    }
+
+    const report = reportResult.rows[0];
+    const oldDeptResult = await query('SELECT name FROM departments WHERE id = $1', [report.assigned_department_id]);
+    const newDeptResult = await query('SELECT name FROM departments WHERE id = $1', [department_id]);
+
+    if (!newDeptResult.rows[0]) {
+      return res.status(400).json({ success: false, message: 'Target department not found.' });
+    }
+
+    const oldDeptName = oldDeptResult.rows[0]?.name || 'Unassigned';
+    const newDeptName = newDeptResult.rows[0].name;
+
+    const updated = await query(
+      'UPDATE reports SET assigned_department_id=$1, updated_at=NOW() WHERE id=$2 RETURNING *',
+      [department_id, req.params.id]
+    );
+
+    // Audit log
+    const auditDetails = JSON.stringify({
+      report_tracking_id: report.tracking_id,
+      from_department: oldDeptName,
+      to_department: newDeptName,
+      note: note || null,
+    });
+    await query(
+      `INSERT INTO audit_logs (actor_id, action, target_type, target_id, details)
+       VALUES ($1, 'case_reassigned', 'report', $2, $3)`,
+      [req.user.id, req.params.id, auditDetails]
+    ).catch(() => {});
+
+    // Status history entry
+    await query(
+      `INSERT INTO report_status_history (report_id, from_status, to_status, changed_by, note)
+       VALUES ($1, $2, $2, $3, $4)`,
+      [req.params.id, report.status, req.user.id,
+       `Case reassigned from ${oldDeptName} to ${newDeptName}. ${note || ''}`.trim()]
+    ).catch(() => {});
+
+    return res.json({
+      success: true,
+      message: `Case reassigned to ${newDeptName}.`,
+      data: { report: updated.rows[0] },
+    });
+  } catch (error) {
+    console.error('Reassign error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to reassign case.' });
+  }
+});
+
+// ── PATCH priority (admin) ────────────────────────────────────────────────────
+router.patch('/:id/priority', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const { priority } = req.body;
+    const valid = ['low', 'medium', 'high', 'critical'];
+    if (!valid.includes(priority)) return res.status(400).json({ success: false, message: 'Invalid priority.' });
+    const updated = await query(
+      'UPDATE reports SET priority=$1, updated_at=NOW() WHERE id=$2 RETURNING *',
+      [priority, req.params.id]
+    );
+    return res.json({ success: true, data: { report: updated.rows[0] } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to update priority.' });
   }
 });
 
