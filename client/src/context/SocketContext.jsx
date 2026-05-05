@@ -1,62 +1,36 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 
 const SocketContext = createContext(null);
 
 export const SocketProvider = ({ children }) => {
-  const { user, token } = useAuth();
-  const socketRef = useRef(null);
-  const [connected, setConnected] = useState(false);
+  const { user } = useAuth();
+  const [socket, setSocket] = useState(null);
 
   useEffect(() => {
-    if (!user || !token) {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-        setConnected(false);
-      }
+    if (!user) {
+      setSocket(prev => { prev?.disconnect(); return null; });
       return;
     }
 
-    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || '';
-    
-    socketRef.current = io(SOCKET_URL, {
+    const token = localStorage.getItem('cs_token');
+    const s = io(import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000', {
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 5,
-      reconnectionDelay: 2000,
     });
 
-    socketRef.current.on('connect', () => setConnected(true));
-    socketRef.current.on('disconnect', () => setConnected(false));
-    socketRef.current.on('connect_error', (err) => {
-      console.warn('Socket connection error:', err.message);
-      setConnected(false);
+    s.on('connect_error', (err) => {
+      console.warn('[socket] connect error:', err.message);
     });
 
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-    };
-  }, [user, token]);
-
-  const joinReport = (reportId) => socketRef.current?.emit('join_report', reportId);
-  const leaveReport = (reportId) => socketRef.current?.emit('leave_report', reportId);
-  const sendTyping = (to) => socketRef.current?.emit('typing', { to });
-  const sendStopTyping = (to) => socketRef.current?.emit('stop_typing', { to });
-
-  const on = (event, handler) => {
-    socketRef.current?.on(event, handler);
-    return () => socketRef.current?.off(event, handler);
-  };
+    setSocket(s);
+    return () => { s.disconnect(); };
+  }, [user?.id]);
 
   return (
-    <SocketContext.Provider value={{
-      socket: socketRef.current, connected,
-      joinReport, leaveReport, sendTyping, sendStopTyping, on
-    }}>
+    <SocketContext.Provider value={{ socket }}>
       {children}
     </SocketContext.Provider>
   );
