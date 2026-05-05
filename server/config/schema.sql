@@ -1,11 +1,3 @@
--- ============================================================
--- CivicShield — Unified Schema
--- Single source of truth. Safe to run on a fresh database.
--- All CREATE TABLE use IF NOT EXISTS; all ALTER TABLE use IF NOT EXISTS.
--- ============================================================
-
--- ── Core tables ──────────────────────────────────────────────────────────────
-
 CREATE TABLE IF NOT EXISTS users (
   id            SERIAL PRIMARY KEY,
   name          VARCHAR(150)  NOT NULL,
