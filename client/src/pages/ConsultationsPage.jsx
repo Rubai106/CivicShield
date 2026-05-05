@@ -25,9 +25,20 @@ export default function ConsultationsPage() {
   const [paying, setPaying] = useState(null);
 
   useEffect(() => {
-    // Show toast on return from Stripe
     const payment = searchParams.get('payment');
-    if (payment === 'success') toast.success('Payment successful! Your consultation is now paid.');
+    const sessionId = searchParams.get('session_id');
+    if (payment === 'success' && sessionId) {
+      // Verify payment with server (works even if webhook is delayed/offline)
+      consultationsAPI.verifyPayment(sessionId)
+        .then(() => {
+          toast.success('Payment successful! Your consultation is now paid.');
+          fetchConsultations();
+        })
+        .catch(() => {
+          toast.success('Payment received. Refreshing...');
+          setTimeout(() => fetchConsultations(), 2000);
+        });
+    }
     if (payment === 'cancelled') toast.error('Payment was cancelled.');
   }, []);
 

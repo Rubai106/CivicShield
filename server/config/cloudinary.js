@@ -60,9 +60,6 @@ async function processUploadedFiles(req, res, next) {
           folder: 'civicshield/evidence',
           public_id: publicId,
           resource_type: file.mimetype.startsWith('video') ? 'video' : 'auto',
-          transformation: file.mimetype.startsWith('image')
-            ? [{ quality: 'auto', fetch_format: 'auto' }]
-            : undefined,
         });
         // Set properties expected by existing route code
         file.path = result.secure_url;   // routes check: file.path.startsWith('http')
