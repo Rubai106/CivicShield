@@ -78,11 +78,16 @@ const paginate = (page = 1, limit = 10) => {
 const createNotification = async (userId, title, message, type, reportId) => {
   if (!userId) return;
   try {
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO notifications (user_id, title, message, type, report_id)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
       [userId, title, message, type, reportId || null]
     );
+    // Push real-time notification to the recipient's socket room
+    if (global.io && result.rows[0]) {
+      global.io.to(`user_${userId}`).emit('notification', result.rows[0]);
+    }
   } catch {
     // Silently skip if notifications table doesn't exist yet
   }

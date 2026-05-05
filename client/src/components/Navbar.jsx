@@ -1,5 +1,6 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import NotificationCenter from './NotificationCenter';
 
 export default function Navbar() {
   const { user, logout, isAuthority, isReporter } = useAuth();
@@ -13,10 +14,14 @@ export default function Navbar() {
     navLinks = [
       { to: '/dashboard', label: 'My Reports' },
       { to: '/reports/new', label: 'File Report' },
+      { to: '/chat', label: 'Messages' },
+      { to: '/consultations', label: 'Consultations' },
     ];
   } else if (isAuthority) {
     navLinks = [
-        { to: '/dashboard', label: 'Dashboard' },
+      { to: '/authority', label: 'Dashboard' },
+      { to: '/chat', label: 'Messages' },
+      { to: '/consultations', label: 'Consultations' },
     ];
   }
 
@@ -48,6 +53,8 @@ export default function Navbar() {
               {item.label}
             </Link>
           ))}
+
+          {user && <NotificationCenter />}
 
           <span className="hidden sm:inline text-xs text-slate-500 px-2">
             {user?.name} ({user?.role})

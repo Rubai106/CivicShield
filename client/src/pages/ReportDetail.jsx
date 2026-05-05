@@ -45,6 +45,7 @@ export default function ReportDetail() {
   const [reassignDeptId, setReassignDeptId] = useState('');
   const [reassignNote, setReassignNote]   = useState('');
   const [reassigning, setReassigning]     = useState(false);
+  const [verifyResults, setVerifyResults] = useState({});
   const commentsEndRef = useRef(null);
 
   useEffect(() => {
@@ -150,6 +151,27 @@ export default function ReportDetail() {
     }
   };
 
+  const handleVerify = async (evidenceId, fileUrl, storedHash) => {
+    if (!storedHash) {
+      setVerifyResults(prev => ({ ...prev, [evidenceId]: { status: 'no_hash' } }));
+      return;
+    }
+    setVerifyResults(prev => ({ ...prev, [evidenceId]: { loading: true } }));
+    try {
+      const response = await fetch(fileUrl);
+      if (!response.ok) throw new Error('Fetch failed');
+      const buffer = await response.arrayBuffer();
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', buffer);
+      const computedHash = Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      const status = computedHash === storedHash ? 'ok' : 'mismatch';
+      setVerifyResults(prev => ({ ...prev, [evidenceId]: { loading: false, status } }));
+    } catch {
+      setVerifyResults(prev => ({ ...prev, [evidenceId]: { loading: false, status: 'error' } }));
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen">
@@ -224,20 +246,50 @@ export default function ReportDetail() {
               <div className="card p-5">
                 <h3 className="font-semibold text-slate-200 mb-3">Evidence ({evidence.length})</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {evidence.map(ev => (
-                    <a key={ev.id} href={ev.file_url} target="_blank" rel="noreferrer"
-                      className="group block p-3 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors">
-                      {ev.file_type?.startsWith('image') ? (
-                        <img src={ev.file_url} alt={ev.file_name}
-                          className="w-full h-24 object-cover rounded mb-2" />
-                      ) : (
-                        <div className="w-full h-24 bg-slate-700 rounded flex items-center justify-center text-2xl mb-2">
-                          {ev.file_type?.includes('pdf') ? '📄' : ev.file_type?.startsWith('video') ? '🎥' : '📎'}
-                        </div>
-                      )}
-                      <p className="text-xs text-slate-400 truncate">{ev.file_name}</p>
-                    </a>
-                  ))}
+                  {evidence.map(ev => {
+                    const vr = verifyResults[ev.id];
+                    return (
+                      <div key={ev.id} className="p-3 bg-slate-800 rounded-lg flex flex-col">
+                        <a href={ev.file_url} target="_blank" rel="noreferrer" className="block group mb-2">
+                          {ev.file_type?.startsWith('image') ? (
+                            <img src={ev.file_url} alt={ev.file_name}
+                              className="w-full h-24 object-cover rounded" />
+                          ) : (
+                            <div className="w-full h-24 bg-slate-700 rounded flex items-center justify-center text-2xl">
+                              {ev.file_type?.includes('pdf') ? '📄' : ev.file_type?.startsWith('video') ? '🎥' : '📎'}
+                            </div>
+                          )}
+                          <p className="text-xs text-slate-400 truncate mt-1.5 group-hover:text-slate-200 transition-colors">{ev.file_name}</p>
+                        </a>
+
+                        {ev.hash_sha256 ? (
+                          <div className="mt-auto space-y-1.5 pt-2 border-t border-slate-700">
+                            <p className="text-xs text-slate-500 font-mono truncate" title={ev.hash_sha256}>
+                              {ev.hash_sha256.slice(0, 14)}…
+                            </p>
+                            <button
+                              onClick={() => handleVerify(ev.id, ev.file_url, ev.hash_sha256)}
+                              disabled={vr?.loading}
+                              className="w-full text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-300 rounded transition-colors"
+                            >
+                              {vr?.loading ? 'Verifying…' : 'Verify Integrity'}
+                            </button>
+                            {vr?.status === 'ok' && (
+                              <p className="text-xs text-green-400 text-center">✓ Verified — file is intact</p>
+                            )}
+                            {vr?.status === 'mismatch' && (
+                              <p className="text-xs text-red-400 text-center">✗ Hash mismatch — possible tampering</p>
+                            )}
+                            {vr?.status === 'error' && (
+                              <p className="text-xs text-amber-400 text-center">⚠ Could not fetch file</p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-600 mt-auto pt-2 border-t border-slate-700">No hash recorded</p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

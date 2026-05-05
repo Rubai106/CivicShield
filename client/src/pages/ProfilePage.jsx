@@ -45,6 +45,7 @@ export default function ProfilePage() {
   });
 
   const [saving, setSaving] = useState(false);
+  const [feeInput, setFeeInput] = useState('0.00');
 
   useEffect(() => {
     if (user?.role === 'authority') {
@@ -57,6 +58,9 @@ export default function ProfilePage() {
           const profile = data.data?.profile;
           setOnboardStatus(req);
           setAuthorityProfile(profile);
+          if (profile?.consultation_fee_cents != null) {
+            setFeeInput((profile.consultation_fee_cents / 100).toFixed(2));
+          }
           if (req) {
             setOnboardForm({
               department_id: req.department_id || '',
@@ -96,8 +100,6 @@ export default function ProfilePage() {
 
   const handleOnboard = async () => {
     if (!onboardForm.department_id) { toast.error('Select a department'); return; }
-    if (!onboardForm.department_type) { toast.error('Select a department type'); return; }
-    if (!onboardForm.designation) { toast.error('Select your officer role'); return; }
     setSaving(true);
     try {
       await authAPI.onboardAuthority(onboardForm);
@@ -106,6 +108,15 @@ export default function ProfilePage() {
       const { data } = await authAPI.getOnboardingStatus();
       setOnboardStatus(data.data?.request);
     } catch (err) { toast.error(err?.response?.data?.message || 'Failed'); }
+    finally { setSaving(false); }
+  };
+
+  const handleSaveFee = async () => {
+    setSaving(true);
+    try {
+      await authAPI.setAuthorityFee({ fee: feeInput || 0 });
+      toast.success('Consultation fee updated');
+    } catch { toast.error('Failed to update fee'); }
     finally { setSaving(false); }
   };
 
@@ -154,14 +165,9 @@ export default function ProfilePage() {
               <span className="text-lg">{statusInfo.icon}</span>
               <div>
                 <p className={`font-semibold text-sm ${statusInfo.color}`}>{statusInfo.label}</p>
-                {onboardStatus?.status === 'approved' && authorityProfile?.department_id && (
+                {onboardStatus?.status === 'approved' && authorityProfile && (
                   <p className="text-xs text-slate-300 mt-0.5">
                     {authorityProfile.department_name} — {authorityProfile.designation || 'Officer'}
-                  </p>
-                )}
-                {onboardStatus?.status === 'approved' && !authorityProfile?.department_id && (
-                  <p className="text-xs text-amber-300 mt-0.5">
-                    Account verified — apply for a department role in the Onboarding tab
                   </p>
                 )}
                 {onboardStatus?.status === 'rejected' && (
@@ -268,8 +274,9 @@ export default function ProfilePage() {
               </div>
             )}
 
-            {/* Approved WITH department — show profile summary */}
+            {/* Approved WITH department — show profile summary + consultation fee */}
             {onboardStatus?.status === 'approved' && authorityProfile?.department_id && (
+              <>
               <div className="card p-5 border border-green-700/50 bg-green-900/10">
                 <h3 className="font-semibold text-green-400 text-base mb-3">Verified & Active</h3>
                 <div className="grid grid-cols-2 gap-y-2 text-sm">
@@ -286,6 +293,30 @@ export default function ProfilePage() {
                   ))}
                 </div>
               </div>
+
+              {/* Consultation fee card */}
+              <div className="card p-5">
+                <h3 className="font-semibold text-slate-200 text-sm mb-1">Consultation Fee</h3>
+                <p className="text-xs text-slate-400 mb-3">
+                  Set the fee reporters pay when booking a consultation with you. Enter 0 for free consultations.
+                </p>
+                <div className="flex items-center gap-3">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={feeInput}
+                      onChange={e => setFeeInput(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full pl-7 pr-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none" />
+                  </div>
+                  <button onClick={handleSaveFee} disabled={saving}
+                    className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                    {saving ? 'Saving...' : 'Save Fee'}
+                  </button>
+                </div>
+              </div>
+              </>
             )}
 
             {/* Approved WITHOUT department — prompt them to apply for a role */}
@@ -302,13 +333,9 @@ export default function ProfilePage() {
             {(onboardStatus?.status !== 'approved' || !authorityProfile?.department_id) && (
               <div className="card p-6 space-y-4">
                 <div>
-                  <h2 className="font-semibold text-slate-200">
-                    {onboardStatus?.status === 'approved' ? 'Apply for Department Role' : 'Authority Onboarding'}
-                  </h2>
+                  <h2 className="font-semibold text-slate-200">Authority Onboarding</h2>
                   <p className="text-sm text-slate-400 mt-1">
-                    {onboardStatus?.status === 'approved'
-                      ? 'Your account is verified. Select your department and role — admin will review and assign you.'
-                      : 'Submit your institutional details for admin verification. Only verified departments can operate inside the system.'}
+                    Submit your institutional details for admin verification. Only verified departments can operate inside the system.
                   </p>
                 </div>
 
@@ -327,7 +354,7 @@ export default function ProfilePage() {
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-1.5">Department Type *</label>
                   <select value={onboardForm.department_type}
-                    onChange={e => setOnboardForm(p => ({ ...p, department_type: e.target.value, designation: '' }))}
+                    onChange={e => setOnboardForm(p => ({ ...p, department_type: e.target.value }))}
                     className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
                     <option value="">Select type</option>
                     {DEPT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
@@ -350,32 +377,22 @@ export default function ProfilePage() {
                   )}
                 </div>
 
-                {/* Role / Designation — dropdown driven by department type */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Officer Role *</label>
-                  {onboardForm.department_type ? (
-                    <select value={onboardForm.designation}
+                {/* Badge + Designation */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1.5">Badge Number</label>
+                    <input value={onboardForm.badge_number}
+                      onChange={e => setOnboardForm(p => ({ ...p, badge_number: e.target.value }))}
+                      placeholder="e.g. BD-PD-12345"
+                      className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1.5">Designation</label>
+                    <input value={onboardForm.designation}
                       onChange={e => setOnboardForm(p => ({ ...p, designation: e.target.value }))}
-                      className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
-                      <option value="">Select your role</option>
-                      {(OFFICER_ROLES[onboardForm.department_type] || OFFICER_ROLES.Other).map(r => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="text-xs text-slate-500 px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg">
-                      Select a department type first to see available roles
-                    </p>
-                  )}
-                </div>
-
-                {/* Badge number */}
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1.5">Badge / ID Number</label>
-                  <input value={onboardForm.badge_number}
-                    onChange={e => setOnboardForm(p => ({ ...p, badge_number: e.target.value }))}
-                    placeholder="e.g. BD-PD-12345"
-                    className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none" />
+                      placeholder="e.g. Inspector"
+                      className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none" />
+                  </div>
                 </div>
 
                 {/* Office address */}
@@ -390,13 +407,7 @@ export default function ProfilePage() {
 
                 <button onClick={handleOnboard} disabled={saving}
                   className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
-                  {saving
-                    ? 'Submitting...'
-                    : onboardStatus?.status === 'approved'
-                      ? 'Apply for Department Role'
-                      : onboardStatus
-                        ? 'Resubmit for Verification'
-                        : 'Submit for Verification'}
+                  {saving ? 'Submitting...' : onboardStatus ? 'Resubmit for Verification' : 'Submit for Verification'}
                 </button>
               </div>
             )}

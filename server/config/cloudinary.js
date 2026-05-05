@@ -1,6 +1,5 @@
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -13,7 +12,6 @@ const hasRealCloudinary =
   !looksLikePlaceholder(process.env.CLOUDINARY_API_KEY) &&
   !looksLikePlaceholder(process.env.CLOUDINARY_API_SECRET);
 
-// Cloudinary is optional for Sprint-1 demos; fall back to local storage if keys are placeholders.
 if (hasRealCloudinary) {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -22,62 +20,65 @@ if (hasRealCloudinary) {
   });
 }
 
-let upload;
+const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm'];
 
-if (hasRealCloudinary) {
-  const storage = new CloudinaryStorage({
-    cloudinary,
-    params: async (req, file) => {
-      const folder = 'civicshield/evidence';
-      const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm'];
+// Always use memoryStorage so the buffer is available for SHA-256 hashing.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_TYPES.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Invalid file type. Allowed: images, PDFs, videos.'), false);
+  },
+});
 
-      if (!allowed.includes(file.mimetype)) {
-        throw new Error('Invalid file type. Allowed: images, PDFs, videos.');
-      }
+const uploadsDir = path.join(__dirname, '..', 'uploads');
 
-      return {
-        folder,
-        resource_type: file.mimetype.startsWith('video') ? 'video' : 'auto',
-        public_id: `evidence_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`,
-        transformation: file.mimetype.startsWith('image') ? [{ quality: 'auto', fetch_format: 'auto' }] : undefined,
-      };
-    },
-  });
-
-  upload = multer({
-    storage,
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
-    fileFilter: (req, file, cb) => {
-      const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm'];
-      if (allowed.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Invalid file type'), false);
-      }
-    },
-  });
-} else {
-  const uploadsDir = path.join(__dirname, '..', 'uploads');
-  fs.mkdirSync(uploadsDir, { recursive: true });
-
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadsDir),
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '';
-      const name = `evidence_${Date.now()}_${crypto.randomBytes(8).toString('hex')}${ext}`;
-      cb(null, name);
-    },
-  });
-
-  upload = multer({
-    storage,
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
-    fileFilter: (req, file, cb) => {
-      const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm'];
-      if (allowed.includes(file.mimetype)) cb(null, true);
-      else cb(new Error('Invalid file type'), false);
-    },
+function uploadStreamToCloudinary(buffer, options) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(options, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+    stream.end(buffer);
   });
 }
 
-module.exports = { cloudinary, upload };
+// Middleware: computes SHA-256 for each uploaded file from the in-memory buffer,
+// then persists it (Cloudinary stream or local disk write).
+// Attaches .sha256, .path (Cloudinary URL) or .filename (disk), and .public_id
+// so existing route code continues to work without changes.
+async function processUploadedFiles(req, res, next) {
+  if (!req.files || req.files.length === 0) return next();
+  try {
+    for (const file of req.files) {
+      file.sha256 = crypto.createHash('sha256').update(file.buffer).digest('hex');
+
+      if (hasRealCloudinary) {
+        const publicId = `evidence_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+        const result = await uploadStreamToCloudinary(file.buffer, {
+          folder: 'civicshield/evidence',
+          public_id: publicId,
+          resource_type: file.mimetype.startsWith('video') ? 'video' : 'auto',
+          transformation: file.mimetype.startsWith('image')
+            ? [{ quality: 'auto', fetch_format: 'auto' }]
+            : undefined,
+        });
+        // Set properties expected by existing route code
+        file.path = result.secure_url;   // routes check: file.path.startsWith('http')
+        file.public_id = result.public_id;
+      } else {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+        const ext = path.extname(file.originalname) || '';
+        const filename = `evidence_${Date.now()}_${crypto.randomBytes(8).toString('hex')}${ext}`;
+        fs.writeFileSync(path.join(uploadsDir, filename), file.buffer);
+        file.filename = filename;        // routes use: file.filename
+      }
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { cloudinary, upload, processUploadedFiles };

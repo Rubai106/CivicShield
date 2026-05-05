@@ -3,8 +3,8 @@ const path = require('path');
 const router = express.Router();
 const { query, pool } = require('../config/db');
 const { authenticate, authorize, canAccessReport } = require('../middleware/auth');
-const { upload } = require('../config/cloudinary');
-const { generateTrackingId, autoAssignDepartment, paginate, computePriority } = require('../utils/helpers');
+const { upload, processUploadedFiles } = require('../config/cloudinary');
+const { generateTrackingId, autoAssignDepartment, paginate, createNotification, computePriority } = require('../utils/helpers');
 
 // ── Duplicate detection (Haversine, no PostGIS) ───────────────────────────────
 async function detectDuplicate(reportId, categoryId, lat, lng, submittedAt) {
@@ -104,7 +104,7 @@ router.get('/', authenticate, async (req, res) => {
 });
 
 // ── POST create report ────────────────────────────────────────────────────────
-router.post('/', authenticate, authorize('reporter'), upload.any(), async (req, res) => {
+router.post('/', authenticate, authorize('reporter'), upload.any(), processUploadedFiles, async (req, res) => {
   try {
     const {
       title = '', description = '', category_id,
@@ -159,9 +159,9 @@ router.post('/', authenticate, authorize('reporter'), upload.any(), async (req, 
           ? file.path
           : `${req.protocol}://${req.get('host')}/uploads/${file.filename || path.basename(file.path)}`;
         await query(
-          `INSERT INTO evidence (report_id, file_url, file_name, file_type, file_size, public_id)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [report.id, fileUrl, file.originalname, file.mimetype, file.size, file.filename || file.public_id || null]
+          `INSERT INTO evidence (report_id, file_url, file_name, file_type, file_size, public_id, hash_sha256)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [report.id, fileUrl, file.originalname, file.mimetype, file.size, file.filename || file.public_id || null, file.sha256 || null]
         );
       }
     }
@@ -234,7 +234,7 @@ router.get('/:id', authenticate, canAccessReport, async (req, res) => {
 });
 
 // ── PUT update report (edit/resubmit draft) ───────────────────────────────────
-router.put('/:id', authenticate, authorize('reporter'), upload.any(), async (req, res) => {
+router.put('/:id', authenticate, authorize('reporter'), upload.any(), processUploadedFiles, async (req, res) => {
   try {
     const {
       title = '', description = '', category_id,
@@ -299,9 +299,9 @@ router.put('/:id', authenticate, authorize('reporter'), upload.any(), async (req
           ? file.path
           : `${req.protocol}://${req.get('host')}/uploads/${file.filename || path.basename(file.path)}`;
         await query(
-          `INSERT INTO evidence (report_id, file_url, file_name, file_type, file_size, public_id)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [report.id, fileUrl, file.originalname, file.mimetype, file.size, file.filename || null]
+          `INSERT INTO evidence (report_id, file_url, file_name, file_type, file_size, public_id, hash_sha256)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [report.id, fileUrl, file.originalname, file.mimetype, file.size, file.filename || null, file.sha256 || null]
         );
       }
     }
@@ -378,6 +378,16 @@ router.patch('/:id/status', authenticate, authorize('authority', 'admin'), canAc
       [req.params.id, currentStatus, status, req.user.id, note || null]
     ).catch(() => {});
 
+    // Notify the reporter of the status change
+    const reportRow = updated.rows[0];
+    await createNotification(
+      reportRow.reporter_id,
+      'Report Status Updated',
+      `Your report "${reportRow.title}" status changed to "${status}".`,
+      'status_change',
+      reportRow.id
+    );
+
     return res.json({ success: true, message: `Status updated to "${status}".`, data: { report: updated.rows[0] } });
   } catch (error) {
     console.error('Update status error:', error);
@@ -443,6 +453,22 @@ router.patch('/:id/reassign', authenticate, authorize('authority', 'admin'), can
   } catch (error) {
     console.error('Reassign error:', error);
     return res.status(500).json({ success: false, message: 'Failed to reassign case.' });
+  }
+});
+
+// ── GET evidence integrity (verify SHA-256) ───────────────────────────────────
+router.get('/:id/evidence/:eid/verify', authenticate, canAccessReport, async (req, res) => {
+  try {
+    const ev = await query(
+      `SELECT id, file_name, file_type, file_url, hash_sha256, uploaded_at
+       FROM evidence WHERE id = $1 AND report_id = $2`,
+      [req.params.eid, req.params.id]
+    );
+    if (!ev.rows[0]) return res.status(404).json({ success: false, message: 'Evidence not found.' });
+    return res.json({ success: true, data: ev.rows[0] });
+  } catch (error) {
+    console.error('Verify evidence error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to retrieve evidence record.' });
   }
 });
 

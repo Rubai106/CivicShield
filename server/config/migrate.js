@@ -43,6 +43,28 @@ const PATCHES = [
   `ALTER TABLE notifications ADD COLUMN IF NOT EXISTS report_id INTEGER REFERENCES reports(id) ON DELETE SET NULL`,
   `ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at   TIMESTAMPTZ`,
 
+  // Sprint-4: Consultation & Payment module
+  `ALTER TABLE authority_profiles ADD COLUMN IF NOT EXISTS consultation_fee_cents INTEGER NOT NULL DEFAULT 0`,
+
+  `CREATE TABLE IF NOT EXISTS consultations (
+     id                   SERIAL PRIMARY KEY,
+     reporter_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     authority_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     title                VARCHAR(200) NOT NULL DEFAULT 'Consultation Request',
+     description          TEXT,
+     scheduled_at         TIMESTAMPTZ,
+     status               VARCHAR(20) NOT NULL DEFAULT 'Pending'
+                            CHECK (status IN ('Pending','Confirmed','Cancelled','Completed')),
+     payment_status       VARCHAR(20) NOT NULL DEFAULT 'Unpaid'
+                            CHECK (payment_status IN ('Unpaid','Paid','Refunded')),
+     checkout_session_id  VARCHAR(300),
+     amount_cents         INTEGER NOT NULL DEFAULT 0,
+     created_at           TIMESTAMPTZ DEFAULT NOW()
+   )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_consultations_reporter  ON consultations(reporter_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_consultations_authority ON consultations(authority_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_consultations_status    ON consultations(status)`,
 
   `INSERT INTO sla_rules (department_id, resolution_days)
    SELECT id, 5 FROM departments
