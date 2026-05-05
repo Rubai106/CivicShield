@@ -4,7 +4,41 @@ const router = express.Router();
 const { query, pool } = require('../config/db');
 const { authenticate, authorize, canAccessReport } = require('../middleware/auth');
 const { upload } = require('../config/cloudinary');
-const { generateTrackingId, autoAssignDepartment, paginate } = require('../utils/helpers');
+const { generateTrackingId, autoAssignDepartment, paginate, computePriority } = require('../utils/helpers');
+
+// ── Duplicate detection (Haversine, no PostGIS) ───────────────────────────────
+async function detectDuplicate(reportId, categoryId, lat, lng, submittedAt) {
+  if (!lat || !lng || !categoryId || !submittedAt) return null;
+  try {
+    const result = await query(
+      `SELECT * FROM (
+         SELECT id,
+           ROUND(6371000 * 2 * asin(sqrt(
+             power(sin(radians((location_lat - $1) / 2)), 2) +
+             cos(radians($1)) * cos(radians(location_lat)) *
+             power(sin(radians((location_lng - $2) / 2)), 2)
+           ))) AS distance_meters
+         FROM reports
+         WHERE id != $3
+           AND category_id = $4
+           AND is_draft = false
+           AND duplicate_status IS DISTINCT FROM 'confirmed'
+           AND submitted_at >= $5::timestamptz - INTERVAL '48 hours'
+           AND submitted_at <= $5::timestamptz + INTERVAL '48 hours'
+           AND location_lat IS NOT NULL
+           AND location_lng IS NOT NULL
+       ) candidates
+       WHERE distance_meters <= 300
+       ORDER BY distance_meters ASC
+       LIMIT 1`,
+      [lat, lng, reportId, categoryId, submittedAt]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    console.error('Duplicate detection error:', err.message);
+    return null;
+  }
+}
 
 // ── GET all reports (role-filtered) ──────────────────────────────────────────
 router.get('/', authenticate, async (req, res) => {
@@ -19,7 +53,11 @@ router.get('/', authenticate, async (req, res) => {
       where = `WHERE r.reporter_id = $1`;
       params.push(user.id);
     } else if (user.role === 'authority') {
-      where = `WHERE r.is_draft = false`;
+      // Only show reports assigned to this authority's department
+      where = `WHERE r.is_draft = false AND r.assigned_department_id = (
+        SELECT department_id FROM authority_profiles WHERE user_id = $1 AND department_id IS NOT NULL LIMIT 1
+      )`;
+      params.push(user.id);
     } else {
       where = 'WHERE 1=1';
     }
@@ -83,22 +121,25 @@ router.post('/', authenticate, authorize('reporter'), upload.any(), async (req, 
 
     const isAnon = String(is_anonymous) === 'true';
     const trackingId = generateTrackingId();
-    const deptResult = await autoAssignDepartment(category_id);
+    const [deptResult, autoPriority] = await Promise.all([
+      autoAssignDepartment(category_id),
+      computePriority(category_id, description),
+    ]);
     const assignedDeptId = deptResult?.departmentId || null;
 
     const created = await query(
       `INSERT INTO reports (
         tracking_id, title, description, category_id, reporter_id,
         is_anonymous, incident_date, location_text, location_lat, location_lng,
-        status, is_draft, assigned_department_id, submitted_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        status, is_draft, assigned_department_id, submitted_at, priority
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       RETURNING *`,
       [
         trackingId, title, description, category_id || null, req.user.id,
         isAnon, incident_date || null, location_text || null,
         location_lat || null, location_lng || null,
         isDraft ? 'Draft' : 'Submitted', isDraft,
-        assignedDeptId, isDraft ? null : new Date(),
+        assignedDeptId, isDraft ? null : new Date(), autoPriority,
       ]
     );
 
@@ -122,6 +163,21 @@ router.post('/', authenticate, authorize('reporter'), upload.any(), async (req, 
            VALUES ($1,$2,$3,$4,$5,$6)`,
           [report.id, fileUrl, file.originalname, file.mimetype, file.size, file.filename || file.public_id || null]
         );
+      }
+    }
+
+    // Run duplicate detection for submitted reports (non-drafts with location)
+    if (!isDraft && report.location_lat && report.location_lng) {
+      const dup = await detectDuplicate(
+        report.id, report.category_id,
+        report.location_lat, report.location_lng,
+        report.submitted_at
+      );
+      if (dup) {
+        await query(
+          `UPDATE reports SET possible_duplicate_of = $1, duplicate_status = 'flagged' WHERE id = $2`,
+          [dup.id, report.id]
+        ).catch(() => {});
       }
     }
 
@@ -201,7 +257,10 @@ router.put('/:id', authenticate, authorize('reporter'), upload.any(), async (req
       return res.status(400).json({ success: false, message: 'Title, description, and category are required.' });
     }
 
-    const deptResult = await autoAssignDepartment(category_id);
+    const [deptResult, autoPriority] = await Promise.all([
+      autoAssignDepartment(category_id),
+      computePriority(category_id, description),
+    ]);
     const assignedDeptId = deptResult?.departmentId || null;
     const submittedAt = isDraft ? null : (reportCheck.rows[0].submitted_at || new Date());
 
@@ -210,13 +269,13 @@ router.put('/:id', authenticate, authorize('reporter'), upload.any(), async (req
         title=$1, description=$2, category_id=$3, is_anonymous=$4,
         incident_date=$5, location_text=$6, location_lat=$7, location_lng=$8,
         status=$9, is_draft=$10, assigned_department_id=$11, submitted_at=$12,
-        updated_at=NOW()
-       WHERE id=$13 AND reporter_id=$14 RETURNING *`,
+        priority=$13, updated_at=NOW()
+       WHERE id=$14 AND reporter_id=$15 RETURNING *`,
       [
         title, description, category_id || null, isAnon,
         incident_date || null, location_text || null, location_lat || null, location_lng || null,
         isDraft ? 'Draft' : 'Submitted', isDraft,
-        assignedDeptId, submittedAt,
+        assignedDeptId, submittedAt, autoPriority,
         req.params.id, req.user.id,
       ]
     );
@@ -247,6 +306,21 @@ router.put('/:id', authenticate, authorize('reporter'), upload.any(), async (req
       }
     }
 
+    // Run duplicate detection when draft is submitted with location
+    if (!isDraft && report.location_lat && report.location_lng) {
+      const dup = await detectDuplicate(
+        report.id, report.category_id,
+        report.location_lat, report.location_lng,
+        report.submitted_at
+      );
+      if (dup) {
+        await query(
+          `UPDATE reports SET possible_duplicate_of = $1, duplicate_status = 'flagged' WHERE id = $2`,
+          [dup.id, report.id]
+        ).catch(() => {});
+      }
+    }
+
     return res.json({
       success: true,
       message: isDraft ? 'Draft updated.' : 'Report submitted successfully.',
@@ -259,7 +333,7 @@ router.put('/:id', authenticate, authorize('reporter'), upload.any(), async (req
 });
 
 // ── PATCH status (authority) ──────────────────────────────────────────────────
-router.patch('/:id/status', authenticate, authorize('authority', 'admin'), async (req, res) => {
+router.patch('/:id/status', authenticate, authorize('authority', 'admin'), canAccessReport, async (req, res) => {
   try {
     const { status, note } = req.body;
     const validStatuses = ['Submitted', 'Under Review', 'Investigating', 'Resolved', 'Closed'];
@@ -312,7 +386,7 @@ router.patch('/:id/status', authenticate, authorize('authority', 'admin'), async
 });
 
 // ── PATCH reassign department (authority / admin) ─────────────────────────────
-router.patch('/:id/reassign', authenticate, authorize('authority', 'admin'), async (req, res) => {
+router.patch('/:id/reassign', authenticate, authorize('authority', 'admin'), canAccessReport, async (req, res) => {
   try {
     const { department_id, note } = req.body;
     if (!department_id) {
@@ -372,11 +446,11 @@ router.patch('/:id/reassign', authenticate, authorize('authority', 'admin'), asy
   }
 });
 
-// ── PATCH priority (admin) ────────────────────────────────────────────────────
-router.patch('/:id/priority', authenticate, authorize('admin'), async (req, res) => {
+// ── PATCH priority (admin or authority for their dept) ────────────────────────
+router.patch('/:id/priority', authenticate, authorize('admin', 'authority'), canAccessReport, async (req, res) => {
   try {
     const { priority } = req.body;
-    const valid = ['low', 'medium', 'high', 'critical'];
+    const valid = ['Low', 'Medium', 'High', 'Critical'];
     if (!valid.includes(priority)) return res.status(400).json({ success: false, message: 'Invalid priority.' });
     const updated = await query(
       'UPDATE reports SET priority=$1, updated_at=NOW() WHERE id=$2 RETURNING *',

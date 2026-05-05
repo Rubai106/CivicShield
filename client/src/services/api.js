@@ -49,6 +49,7 @@ export const reportsAPI = {
     headers: { 'Content-Type': data instanceof FormData ? 'multipart/form-data' : 'application/json' },
   }),
   updateStatus: (id, data) => api.patch(`/reports/${id}/status`, data),
+  updatePriority: (id, data) => api.patch(`/reports/${id}/priority`, data),
   reassign: (id, data) => api.patch(`/reports/${id}/reassign`, data),
   delete: (id) => api.delete(`/reports/${id}`),
 };
@@ -101,6 +102,15 @@ export const adminAPI = {
 
   // Audit logs
   getAuditLogs: () => api.get('/admin/audit-logs'),
+
+  // Unassigned reports & manual assignment
+  getUnassignedReports: () => api.get('/admin/unassigned-reports'),
+  assignDepartment: (reportId, data) => api.patch(`/admin/reports/${reportId}/assign`, data),
+
+  // Duplicate detection
+  getDuplicateFlags: () => api.get('/admin/duplicate-flags'),
+  dismissDuplicate: (id) => api.post(`/admin/reports/${id}/duplicate/dismiss`),
+  confirmDuplicate: (id, data) => api.post(`/admin/reports/${id}/duplicate/confirm`, data),
 };
 
 export const commentsAPI = {
