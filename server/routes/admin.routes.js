@@ -555,8 +555,6 @@ router.post('/categories-manage', async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // ── COMPLIANCE DASHBOARD ─────────────────────────────────────────────────────
 
 // SLA Compliance per department
@@ -904,3 +902,5 @@ router.get('/sla-monitoring', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to fetch compliance data.' });
   }
 });
+
+module.exports = router;

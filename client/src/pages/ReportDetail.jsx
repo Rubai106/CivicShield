@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { reportsAPI, commentsAPI, departmentsAPI } from '../services/api';
+import { reportsAPI, commentsAPI, departmentsAPI, reopenAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { formatDistanceToNow, format } from 'date-fns';
@@ -46,6 +46,10 @@ export default function ReportDetail() {
   const [reassignNote, setReassignNote]   = useState('');
   const [reassigning, setReassigning]     = useState(false);
   const [verifyResults, setVerifyResults] = useState({});
+  const [reopenRequests, setReopenRequests]     = useState([]);
+  const [showReopenModal, setShowReopenModal]   = useState(false);
+  const [reopenReason, setReopenReason]         = useState('');
+  const [submittingReopen, setSubmittingReopen] = useState(false);
   const commentsEndRef = useRef(null);
 
   useEffect(() => {
@@ -86,6 +90,9 @@ export default function ReportDetail() {
       // Local server returns "history", remote returns "timeline" — handle both
       setTimeline(repRes.data.data.timeline || repRes.data.data.history || []);
       setComments(comRes.data.data.comments || []);
+      reopenAPI.getRequests(id)
+        .then(r => setReopenRequests(r.data.data.requests || []))
+        .catch(() => {});
     } catch {
       toast.error('Failed to load report');
       navigate(-1);
@@ -155,6 +162,23 @@ export default function ReportDetail() {
     }
   };
 
+  const handleRequestReopen = async () => {
+    if (!reopenReason.trim()) return;
+    setSubmittingReopen(true);
+    try {
+      await reopenAPI.request(id, { reason: reopenReason });
+      toast.success('Reopen request submitted successfully');
+      setShowReopenModal(false);
+      setReopenReason('');
+      const r = await reopenAPI.getRequests(id);
+      setReopenRequests(r.data.data.requests || []);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to submit reopen request');
+    } finally {
+      setSubmittingReopen(false);
+    }
+  };
+
   const handleVerify = async (evidenceId, fileUrl, storedHash) => {
     if (!storedHash) {
       setVerifyResults(prev => ({ ...prev, [evidenceId]: { status: 'no_hash' } }));
@@ -175,6 +199,19 @@ export default function ReportDetail() {
       setVerifyResults(prev => ({ ...prev, [evidenceId]: { loading: false, status: 'error' } }));
     }
   };
+
+  // Reopen eligibility (reporter-side)
+  const REOPEN_WINDOW_DAYS   = 30;
+  const pendingReopenRequest = reopenRequests.find(r => r.status === 'pending');
+  const closedHistEntry      = timeline.filter(t => t.to_status === 'Closed').slice(-1)[0];
+  const closedAt             = closedHistEntry ? new Date(closedHistEntry.created_at) : null;
+  const daysSinceClosed      = closedAt ? (Date.now() - closedAt.getTime()) / (1000 * 60 * 60 * 24) : Infinity;
+  const canRequestReopen =
+    user?.role === 'reporter' &&
+    report?.status === 'Closed' &&
+    daysSinceClosed <= REOPEN_WINDOW_DAYS &&
+    reopenRequests.length < 2 &&
+    !pendingReopenRequest;
 
   if (loading) {
     return (
@@ -485,9 +522,74 @@ export default function ReportDetail() {
               </div>
             </div>
 
+            {/* Reopen Request — reporter only, closed reports */}
+            {user?.role === 'reporter' && report.status === 'Closed' && (
+              <div className="card p-4">
+                <h3 className="font-semibold text-slate-200 mb-3">Reopen Case</h3>
+                {pendingReopenRequest ? (
+                  <div className="p-3 bg-yellow-900/20 border border-yellow-700/40 rounded-lg">
+                    <p className="text-xs text-yellow-400 font-medium mb-1">⏳ Request Pending</p>
+                    <p className="text-xs text-slate-400">Your reopen request is awaiting authority review.</p>
+                  </div>
+                ) : canRequestReopen ? (
+                  <button
+                    onClick={() => setShowReopenModal(true)}
+                    className="w-full py-2 bg-amber-700 hover:bg-amber-600 text-white text-sm rounded-lg font-medium transition-colors"
+                  >
+                    Request Reopen
+                  </button>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    {reopenRequests.length >= 2
+                      ? 'Maximum reopen attempts (2) reached.'
+                      : `Reopen window has passed (${REOPEN_WINDOW_DAYS} days from closing).`}
+                  </p>
+                )}
+                {reopenRequests.length > 0 && (
+                  <p className="text-xs text-slate-600 mt-2">Attempts used: {reopenRequests.length} / 2</p>
+                )}
+              </div>
+            )}
+
           </div>
         </div>
       </div>
+
+      {/* Reopen Request Modal */}
+      {showReopenModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-white mb-1">Request Case Reopen</h3>
+            <p className="text-slate-400 text-sm mb-4">
+              Explain why this closed case should be reopened. An authority officer will review your request.
+            </p>
+            <textarea
+              value={reopenReason}
+              onChange={e => setReopenReason(e.target.value)}
+              rows={4}
+              maxLength={1000}
+              placeholder="Provide a detailed reason for reopening this case..."
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none resize-none mb-1"
+            />
+            <p className="text-xs text-slate-500 mb-4 text-right">{reopenReason.length} / 1000</p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleRequestReopen}
+                disabled={submittingReopen || !reopenReason.trim()}
+                className="flex-1 py-2 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white text-sm rounded-lg font-medium transition-colors"
+              >
+                {submittingReopen ? 'Submitting...' : 'Submit Request'}
+              </button>
+              <button
+                onClick={() => { setShowReopenModal(false); setReopenReason(''); }}
+                className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

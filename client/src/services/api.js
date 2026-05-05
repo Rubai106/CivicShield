@@ -121,6 +121,8 @@ export const commentsAPI = {
 };
 
 export const reopenAPI = {
+  getRequests: (reportId) => api.get(`/reports/${reportId}/reopen`),
+  getPending: () => api.get('/reports/reopen-pending'),
   request: (reportId, data) => api.post(`/reports/${reportId}/reopen`, data),
   decide: (reportId, requestId, data) => api.put(`/reports/${reportId}/reopen/${requestId}`, data),
 };

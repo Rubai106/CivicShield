@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import { reportsAPI, authAPI } from '../services/api';
+import { reportsAPI, authAPI, reopenAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -27,8 +27,21 @@ export default function AuthorityDashboard() {
   const [filters, setFilters] = useState({ status: '', priority: '', page: 1, search: '' });
   const [totalPages, setTotalPages] = useState(1);
   const [stats, setStats] = useState({ total: 0, pending: 0, critical: 0, resolved: 0 });
+  const [reopenPending, setReopenPending]     = useState([]);
+  const [loadingReopen, setLoadingReopen]     = useState(false);
+  const [decideModal, setDecideModal]         = useState(null);
+  const [decideNote, setDecideNote]           = useState('');
+  const [submittingDecide, setSubmittingDecide] = useState(false);
 
   useEffect(() => { fetchReports(); }, [filters]);
+
+  useEffect(() => {
+    setLoadingReopen(true);
+    reopenAPI.getPending()
+      .then(({ data }) => setReopenPending(data.data.requests || []))
+      .catch(() => {})
+      .finally(() => setLoadingReopen(false));
+  }, []);
 
   const fetchReports = async () => {
     setLoading(true);
@@ -45,6 +58,26 @@ export default function AuthorityDashboard() {
       });
     } catch { toast.error('Failed to load reports'); }
     finally { setLoading(false); }
+  };
+
+  const handleDecide = async (decision) => {
+    if (!decideModal) return;
+    setSubmittingDecide(true);
+    try {
+      await reopenAPI.decide(decideModal.reportId, decideModal.requestId, {
+        decision,
+        decision_note: decideNote,
+      });
+      toast.success(decision === 'approved' ? 'Report reopened successfully' : 'Reopen request denied');
+      setDecideModal(null);
+      setDecideNote('');
+      const { data } = await reopenAPI.getPending();
+      setReopenPending(data.data.requests || []);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to process decision');
+    } finally {
+      setSubmittingDecide(false);
+    }
   };
 
   return (
@@ -84,9 +117,68 @@ export default function AuthorityDashboard() {
           ))}
         </div>
 
+        {/* Reopen Requests Panel */}
+        {(loadingReopen ? false : reopenPending.length > 0) && (
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-3">
+              <h2 className="text-base font-semibold text-slate-200">Reopen Requests</h2>
+              <span className="px-2 py-0.5 bg-amber-700/40 text-amber-400 text-xs font-bold rounded-full">
+                {reopenPending.length}
+              </span>
+            </div>
+            <div className="card overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-700 text-left">
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-400 uppercase">Report</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-400 uppercase hidden md:table-cell">Reporter</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-400 uppercase">Reason</th>
+                    <th className="px-4 py-2 text-xs font-semibold text-slate-400 uppercase hidden sm:table-cell">Requested</th>
+                    <th className="px-4 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {reopenPending.map(req => (
+                    <tr key={req.request_id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="text-sm font-medium text-slate-200 truncate max-w-[180px]">{req.title}</p>
+                        <code className="text-xs text-blue-400 font-mono">{req.tracking_id}</code>
+                      </td>
+                      <td className="px-4 py-3 hidden md:table-cell">
+                        <span className="text-xs text-slate-400">{req.reporter_name}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-xs text-slate-300 max-w-[220px] line-clamp-2">{req.reason}</p>
+                      </td>
+                      <td className="px-4 py-3 hidden sm:table-cell">
+                        <span className="text-xs text-slate-500">
+                          {formatDistanceToNow(new Date(req.requested_at), { addSuffix: true })}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => setDecideModal({
+                            requestId: req.request_id,
+                            reportId: req.report_id,
+                            reportTitle: req.title,
+                            reporterName: req.reporter_name,
+                            reason: req.reason,
+                          })}
+                          className="text-xs px-3 py-1.5 bg-amber-700/30 hover:bg-amber-700/50 text-amber-400 rounded-lg font-medium transition-colors"
+                        >
+                          Review
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Filters */}
-        <div className="flex flex-wrap gap-3 mb-5">
-          <input value={filters.search} onChange={e => setFilters(p => ({ ...p, search: e.target.value, page: 1 }))}
+        <div className="flex flex-wrap gap-3 mb-5"> onChange={e => setFilters(p => ({ ...p, search: e.target.value, page: 1 }))}
             placeholder="Search reports..." className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 w-48" />
           <select value={filters.status} onChange={e => setFilters(p => ({ ...p, status: e.target.value, page: 1 }))}
             className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm">
@@ -181,6 +273,57 @@ export default function AuthorityDashboard() {
           </div>
         )}
       </div>
-    </div>
+
+    {/* Decide Modal */}
+    {decideModal && (
+      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+        <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md">
+          <h3 className="text-lg font-semibold text-white mb-1">Review Reopen Request</h3>
+          <p className="text-slate-400 text-sm mb-1">
+            <span className="font-medium text-slate-300">{decideModal.reportTitle}</span>
+          </p>
+          <p className="text-slate-500 text-xs mb-4">From: {decideModal.reporterName}</p>
+
+          <div className="p-3 bg-slate-800 rounded-lg mb-4">
+            <p className="text-xs text-slate-400 font-medium mb-1">Reporter's Reason</p>
+            <p className="text-sm text-slate-300 whitespace-pre-wrap">{decideModal.reason}</p>
+          </div>
+
+          <label className="block text-xs text-slate-400 mb-1">Note (optional)</label>
+          <textarea
+            value={decideNote}
+            onChange={e => setDecideNote(e.target.value)}
+            rows={3}
+            maxLength={500}
+            placeholder="Add a note for the reporter..."
+            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none resize-none mb-4"
+          />
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => handleDecide('approved')}
+              disabled={submittingDecide}
+              className="flex-1 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white text-sm rounded-lg font-medium transition-colors"
+            >
+              {submittingDecide ? 'Processing...' : '✓ Approve'}
+            </button>
+            <button
+              onClick={() => handleDecide('denied')}
+              disabled={submittingDecide}
+              className="flex-1 py-2 bg-red-800 hover:bg-red-700 disabled:opacity-40 text-white text-sm rounded-lg font-medium transition-colors"
+            >
+              ✗ Deny
+            </button>
+            <button
+              onClick={() => { setDecideModal(null); setDecideNote(''); }}
+              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
   );
 }

@@ -191,7 +191,35 @@ router.post('/', authenticate, authorize('reporter'), upload.any(), processUploa
     return res.status(500).json({ success: false, message: 'Failed to create report.' });
   }
 });
+// ── GET pending reopen requests (authority) ──────────────────────────────────
+router.get('/reopen-pending', authenticate, authorize('authority'), async (req, res) => {
+  try {
+    // Get this authority's department
+    const deptRes = await query(
+      'SELECT department_id FROM authority_profiles WHERE user_id = $1 LIMIT 1',
+      [req.user.id]
+    );
+    const deptId = deptRes.rows[0]?.department_id;
+    if (!deptId) return res.json({ success: true, data: { requests: [] } });
 
+    const result = await query(
+      `SELECT rrr.id AS request_id, rrr.report_id, rrr.reason, rrr.created_at AS requested_at,
+              r.tracking_id, r.title, r.status,
+              CASE WHEN r.is_anonymous THEN 'Anonymous Reporter' ELSE u.name END AS reporter_name
+       FROM report_reopen_requests rrr
+       JOIN reports r ON r.id = rrr.report_id
+       JOIN users   u ON u.id = rrr.reporter_id
+       WHERE rrr.status = 'pending'
+         AND r.assigned_department_id = $1
+       ORDER BY rrr.created_at ASC`,
+      [deptId]
+    );
+    return res.json({ success: true, data: { requests: result.rows } });
+  } catch (err) {
+    console.error('Reopen pending error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch reopen requests.' });
+  }
+});
 // ── GET single report ─────────────────────────────────────────────────────────
 router.get('/:id', authenticate, canAccessReport, async (req, res) => {
   try {
@@ -485,6 +513,208 @@ router.patch('/:id/priority', authenticate, authorize('admin', 'authority'), can
     return res.json({ success: true, data: { report: updated.rows[0] } });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Failed to update priority.' });
+  }
+});
+
+// ── GET reopen requests for a report ──────────────────────────────────────────
+router.get('/:id/reopen', authenticate, canAccessReport, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT rrr.*, u.name AS decided_by_name
+       FROM report_reopen_requests rrr
+       LEFT JOIN users u ON u.id = rrr.decided_by
+       WHERE rrr.report_id = $1
+       ORDER BY rrr.created_at ASC`,
+      [req.params.id]
+    );
+    return res.json({ success: true, data: { requests: result.rows } });
+  } catch (err) {
+    console.error('Get reopen requests error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch reopen requests.' });
+  }
+});
+
+// ── POST reopen request (reporter) ──────────────────────────────────────────────
+router.post('/:id/reopen', authenticate, authorize('reporter'), canAccessReport, async (req, res) => {
+  const REOPEN_WINDOW_DAYS = 30;
+  const MAX_ATTEMPTS       = 2;
+  try {
+    const { reason } = req.body;
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ success: false, message: 'A reason is required to request a reopen.' });
+    }
+
+    // Load the report
+    const reportRes = await query(
+      'SELECT * FROM reports WHERE id = $1',
+      [req.params.id]
+    );
+    const report = reportRes.rows[0];
+    if (!report) return res.status(404).json({ success: false, message: 'Report not found.' });
+
+    // Must be Closed
+    if (report.status !== 'Closed') {
+      return res.status(400).json({ success: false, message: 'Only Closed reports can be reopened.' });
+    }
+
+    // Must be within 30-day window — use the latest Closed status history entry
+    const closedHistRes = await query(
+      `SELECT created_at FROM report_status_history
+       WHERE report_id = $1 AND to_status = 'Closed'
+       ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    );
+    const closedAt = closedHistRes.rows[0]?.created_at || report.updated_at;
+    const daysSinceClosed = (Date.now() - new Date(closedAt).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceClosed > REOPEN_WINDOW_DAYS) {
+      return res.status(400).json({
+        success: false,
+        message: `Reopen requests are only allowed within ${REOPEN_WINDOW_DAYS} days of closing.`,
+      });
+    }
+
+    // Check attempt limit
+    const countRes = await query(
+      'SELECT COUNT(*) FROM report_reopen_requests WHERE report_id = $1',
+      [req.params.id]
+    );
+    if (parseInt(countRes.rows[0].count) >= MAX_ATTEMPTS) {
+      return res.status(400).json({
+        success: false,
+        message: `Maximum reopen attempts (${MAX_ATTEMPTS}) reached for this report.`,
+      });
+    }
+
+    // No pending request already
+    const pendingRes = await query(
+      `SELECT id FROM report_reopen_requests WHERE report_id = $1 AND status = 'pending'`,
+      [req.params.id]
+    );
+    if (pendingRes.rows.length > 0) {
+      return res.status(400).json({ success: false, message: 'A reopen request is already pending for this report.' });
+    }
+
+    // Create the request
+    const inserted = await query(
+      `INSERT INTO report_reopen_requests (report_id, reporter_id, reason)
+       VALUES ($1, $2, $3) RETURNING *`,
+      [req.params.id, req.user.id, reason.trim()]
+    );
+
+    // Record in status history
+    await query(
+      `INSERT INTO report_status_history (report_id, from_status, to_status, changed_by, note)
+       VALUES ($1, 'Closed', 'Closed', $2, 'Reopen requested by reporter.')`,
+      [req.params.id, req.user.id]
+    ).catch(() => {});
+
+    // Notify all authority officers in the assigned department
+    if (report.assigned_department_id) {
+      const officers = await query(
+        `SELECT u.id FROM users u
+         JOIN authority_profiles ap ON ap.user_id = u.id
+         WHERE ap.department_id = $1 AND u.is_active = true`,
+        [report.assigned_department_id]
+      );
+      for (const officer of officers.rows) {
+        await createNotification(
+          officer.id,
+          'Reopen Request Received',
+          `Reporter has requested to reopen report "${report.title}" (${report.tracking_id}).`,
+          'reopen_request',
+          report.id
+        );
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Reopen request submitted successfully.',
+      data: { request: inserted.rows[0] },
+    });
+  } catch (err) {
+    console.error('Reopen request error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to submit reopen request.' });
+  }
+});
+
+// ── PUT decide reopen request (authority) ──────────────────────────────────────
+router.put('/:id/reopen/:requestId', authenticate, authorize('authority'), canAccessReport, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { decision, decision_note } = req.body;
+    if (!['approved', 'denied'].includes(decision)) {
+      return res.status(400).json({ success: false, message: 'decision must be "approved" or "denied".' });
+    }
+
+    // Load request
+    const reqRes = await client.query(
+      `SELECT rrr.*, r.title, r.tracking_id, r.reporter_id, r.status AS report_status
+       FROM report_reopen_requests rrr
+       JOIN reports r ON r.id = rrr.report_id
+       WHERE rrr.id = $1 AND rrr.report_id = $2`,
+      [req.params.requestId, req.params.id]
+    );
+    if (!reqRes.rows[0]) {
+      return res.status(404).json({ success: false, message: 'Reopen request not found.' });
+    }
+    const reopenReq = reqRes.rows[0];
+
+    if (reopenReq.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'This request has already been decided.' });
+    }
+
+    await client.query('BEGIN');
+
+    // Update the reopen request
+    await client.query(
+      `UPDATE report_reopen_requests
+       SET status = $1, decided_by = $2, decided_at = NOW(), decision_note = $3
+       WHERE id = $4`,
+      [decision, req.user.id, decision_note || null, req.params.requestId]
+    );
+
+    if (decision === 'approved') {
+      // Reset report status to Submitted and clear resolved_at
+      await client.query(
+        `UPDATE reports SET status = 'Submitted', resolved_at = NULL, updated_at = NOW() WHERE id = $1`,
+        [req.params.id]
+      );
+      // Record in status history
+      await client.query(
+        `INSERT INTO report_status_history (report_id, from_status, to_status, changed_by, note)
+         VALUES ($1, 'Closed', 'Submitted', $2, $3)`,
+        [req.params.id, req.user.id, `Reopen approved. ${decision_note || ''}`.trim()]
+      );
+    } else {
+      // Record denial in status history
+      await client.query(
+        `INSERT INTO report_status_history (report_id, from_status, to_status, changed_by, note)
+         VALUES ($1, 'Closed', 'Closed', $2, $3)`,
+        [req.params.id, req.user.id, `Reopen denied. ${decision_note || ''}`.trim()]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    // Notify the reporter
+    const notifTitle = decision === 'approved' ? 'Reopen Request Approved' : 'Reopen Request Denied';
+    const notifMsg   = decision === 'approved'
+      ? `Your reopen request for "${reopenReq.title}" has been approved. The case is now active again.`
+      : `Your reopen request for "${reopenReq.title}" was denied.${decision_note ? ' Note: ' + decision_note : ''}`;
+
+    await createNotification(reopenReq.reporter_id, notifTitle, notifMsg, 'reopen_decision', parseInt(req.params.id));
+
+    return res.json({
+      success: true,
+      message: decision === 'approved' ? 'Report reopened successfully.' : 'Reopen request denied.',
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Reopen decide error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to process decision.' });
+  } finally {
+    client.release();
   }
 });
 

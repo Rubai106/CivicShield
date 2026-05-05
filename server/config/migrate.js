@@ -69,6 +69,23 @@ const PATCHES = [
   `INSERT INTO sla_rules (department_id, resolution_days)
    SELECT id, 5 FROM departments
    ON CONFLICT (department_id) DO NOTHING`,
+
+  // Feature 19: Reopen Request System
+  `CREATE TABLE IF NOT EXISTS report_reopen_requests (
+     id            SERIAL PRIMARY KEY,
+     report_id     INTEGER       NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+     reporter_id   INTEGER       NOT NULL REFERENCES users(id)  ON DELETE CASCADE,
+     reason        TEXT          NOT NULL,
+     status        VARCHAR(20)   NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','approved','denied')),
+     decided_by    INTEGER       REFERENCES users(id),
+     decided_at    TIMESTAMPTZ,
+     decision_note TEXT,
+     created_at    TIMESTAMPTZ   DEFAULT NOW()
+   )`,
+
+  `CREATE INDEX IF NOT EXISTS idx_reopen_requests_report  ON report_reopen_requests(report_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_reopen_requests_reporter ON report_reopen_requests(reporter_id)`,
 ];
 
 async function migrate() {
