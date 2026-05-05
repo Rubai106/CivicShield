@@ -1,5 +1,53 @@
-const crypto = require('crypto');
-const pool = require('../config/db');
+const { pool } = require('../config/db');
+
+// ── Priority scoring ──────────────────────────────────────────────────────────
+// Values MUST match DB CHECK constraint: 'Low','Medium','High','Critical'
+const CATEGORY_PRIORITY = {
+  'harassment':              'Critical',
+  'cybercrime':              'Critical',
+  'cyber crime':             'Critical',
+  'violence':                'Critical',
+  'safety hazard':           'High',
+  'infrastructure issue':    'Medium',
+  'environmental violation': 'Low',
+  'public nuisance':         'Low',
+};
+
+const CRITICAL_KEYWORDS = [
+  'fire', 'explosion', 'emergency', 'murder', 'rape', 'bomb',
+  'terrorist', 'attack', 'assault', 'kidnap', 'bleeding', 'dead',
+  'fatal', 'danger', 'urgent', 'shooting', 'stabbing', 'hostage',
+];
+
+const HIGH_KEYWORDS = ['fight', 'injured', 'accident', 'collapse', 'flood', 'robbery'];
+
+const PRIORITY_RANK = { Low: 0, Medium: 1, High: 2, Critical: 3 };
+
+const computePriority = async (categoryId, description) => {
+  // Rule 1 — category sets the BASE priority (unknown/missing category → Medium)
+  let base = 'Medium';
+  if (categoryId) {
+    try {
+      const { rows } = await pool.query('SELECT name FROM categories WHERE id = $1', [categoryId]);
+      const mapped = CATEGORY_PRIORITY[rows[0]?.name?.toLowerCase()];
+      if (mapped) base = mapped;
+    } catch { /* non-fatal — keep Medium */ }
+  }
+
+  let rank = PRIORITY_RANK[base];
+
+  // Rule 2 — keywords can only INCREASE priority (Critical > High hierarchy)
+  if (description) {
+    const lower = description.toLowerCase();
+    if (CRITICAL_KEYWORDS.some(kw => lower.includes(kw))) {
+      rank = Math.max(rank, PRIORITY_RANK.Critical);
+    } else if (HIGH_KEYWORDS.some(kw => lower.includes(kw))) {
+      rank = Math.max(rank, PRIORITY_RANK.High);
+    }
+  }
+
+  return Object.keys(PRIORITY_RANK).find(k => PRIORITY_RANK[k] === rank);
+};
 
 const generateTrackingId = () => {
   const year = new Date().getFullYear();
@@ -7,112 +55,37 @@ const generateTrackingId = () => {
   return `CS-${year}-${random}`;
 };
 
-const calculatePriority = (categoryName = '', description = '', mappingPriority = 'Low') => {
-  const criticalKeywords = ['assault', 'murder', 'bomb', 'explosion', 'shooting', 'rape', 'kidnap', 'hostage', 'stabbing'];
-  const highKeywords = ['attack', 'violence', 'theft', 'hacking', 'fraud', 'fire', 'injury', 'threat', 'urgent', 'weapon'];
-  const mediumKeywords = ['harassment', 'damage', 'broken', 'illegal', 'complaint', 'stolen', 'abuse', 'scam'];
-  const text = `${categoryName} ${description}`.toLowerCase();
-  if (criticalKeywords.some(k => text.includes(k))) return 'Critical';
-  if (highKeywords.some(k => text.includes(k))) return 'High';
-  if (mediumKeywords.some(k => text.includes(k))) return 'Medium';
-  return mappingPriority || 'Low';
-};
-
 const autoAssignDepartment = async (categoryId) => {
   if (!categoryId) return null;
   try {
     const { rows } = await pool.query(
-      'SELECT department_id, priority_rule FROM category_department_mappings WHERE category_id = $1 LIMIT 1',
+      'SELECT department_id FROM category_department_mappings WHERE category_id = $1 LIMIT 1',
       [categoryId]
     );
-    if (rows[0]) return { departmentId: rows[0].department_id, priorityRule: rows[0].priority_rule };
+    if (rows[0]) return { departmentId: rows[0].department_id };
   } catch (err) {
     console.error('autoAssignDepartment error:', err.message);
   }
   return null;
 };
 
-const calculateSLADeadline = async (categoryId) => {
-  if (!categoryId) return null;
-  try {
-    const { rows } = await pool.query(
-      'SELECT hours_to_resolve FROM sla_rules WHERE category_id = $1 LIMIT 1',
-      [categoryId]
-    );
-    if (rows[0]) {
-      const deadline = new Date();
-      deadline.setHours(deadline.getHours() + rows[0].hours_to_resolve);
-      return deadline;
-    }
-  } catch (err) {
-    console.error('calculateSLADeadline error:', err.message);
-  }
-  return null;
-};
-
-const createNotification = async (userId, title, message, type, reportId = null) => {
-  try {
-    await pool.query(
-      'INSERT INTO notifications (user_id, type, title, message, report_id) VALUES ($1, $2, $3, $4, $5)',
-      [userId, type || 'general', title, message, reportId]
-    );
-  } catch (err) {
-    console.error('createNotification error:', err.message);
-  }
-};
-
-const addTimeline = async (reportId, action, performedBy, performedByRole = null, details = null) => {
-  try {
-    await pool.query(
-      `INSERT INTO report_timeline (report_id, action, performed_by, actor_id, actor_role, details)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [reportId, action, performedBy, performedBy, performedByRole, details]
-    );
-  } catch (err) {
-    console.error('addTimeline error:', err.message);
-  }
-};
-
-const checkDuplicates = async (reporterId, title, description, categoryId) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, tracking_id, title FROM reports
-       WHERE reporter_id = $1 AND category_id = $2 AND is_draft = false
-       AND created_at > NOW() - INTERVAL '24 hours'`,
-      [reporterId, categoryId]
-    );
-    const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
-    const wordsNew = normalize(`${title} ${description}`).split(/\s+/).filter(w => w.length > 3);
-    const setNew = new Set(wordsNew);
-    for (const existing of rows) {
-      const wordsExist = normalize(existing.title).split(/\s+/).filter(w => w.length > 3);
-      const intersection = wordsExist.filter(w => setNew.has(w)).length;
-      if (intersection >= 3) return existing.id;
-    }
-  } catch (err) {
-    console.error('checkDuplicates error:', err.message);
-  }
-  return null;
-};
-
-const computeFileHash = (buffer) => {
-  return crypto.createHash('sha256').update(buffer).digest('hex');
-};
-
 const paginate = (page = 1, limit = 10) => {
-  const p = Math.max(1, parseInt(page));
-  const l = Math.min(50, Math.max(1, parseInt(limit)));
+  const p = Math.max(1, parseInt(page, 10));
+  const l = Math.min(50, Math.max(1, parseInt(limit, 10)));
   return { offset: (p - 1) * l, limit: l };
 };
 
-module.exports = {
-  generateTrackingId,
-  calculatePriority,
-  autoAssignDepartment,
-  calculateSLADeadline,
-  createNotification,
-  addTimeline,
-  checkDuplicates,
-  computeFileHash,
-  paginate,
+const createNotification = async (userId, title, message, type, reportId) => {
+  if (!userId) return;
+  try {
+    await pool.query(
+      `INSERT INTO notifications (user_id, title, message, type, report_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, title, message, type, reportId || null]
+    );
+  } catch {
+    // Silently skip if notifications table doesn't exist yet
+  }
 };
+
+module.exports = { generateTrackingId, autoAssignDepartment, paginate, createNotification, computePriority };
