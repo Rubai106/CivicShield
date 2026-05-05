@@ -28,7 +28,7 @@ function Overview() {
           byCategory: (d?.category_distribution || []).map(c => ({ name: c.name, count: parseInt(c.count) })),
         });
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   }, []);
 
@@ -343,7 +343,7 @@ function MonthlyTrends() {
   useEffect(() => {
     categoriesAPI.getAll()
       .then(({ data }) => setCategories(data.data?.categories || data.data || []))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -635,9 +635,8 @@ function UnassignedReports() {
             Reports that couldn't be auto-assigned (no routing rule matched their category).
           </p>
         </div>
-        <span className={`px-3 py-1.5 rounded-full text-sm font-bold ${
-          reports.length > 0 ? 'bg-red-900/40 text-red-400' : 'bg-green-900/40 text-green-400'
-        }`}>
+        <span className={`px-3 py-1.5 rounded-full text-sm font-bold ${reports.length > 0 ? 'bg-red-900/40 text-red-400' : 'bg-green-900/40 text-green-400'
+          }`}>
           {reports.length} pending
         </span>
       </div>
@@ -769,25 +768,7 @@ function MappingRules() {
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white">Routing Rules</h2>
 
-      {unmappedCategories.length > 0 && (
-        <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg p-4">
-          <p className="text-sm font-semibold text-amber-400 mb-2">
-            ⚠️ {unmappedCategories.length} categor{unmappedCategories.length === 1 ? 'y has' : 'ies have'} no routing rule
-          </p>
-          <p className="text-xs text-amber-300/70 mb-3">
-            Reports in these categories will not be auto-assigned and will appear in the Unassigned Reports queue.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {unmappedCategories.map(c => (
-              <button key={c.id}
-                onClick={() => setForm(p => ({ ...p, category_id: String(c.id) }))}
-                className="text-xs px-2.5 py-1 bg-amber-900/40 border border-amber-700/50 text-amber-300 rounded-full hover:bg-amber-800/50 transition-colors">
-                {c.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+
 
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-5">
         <h3 className="font-semibold text-slate-200 mb-3">Add Category → Department Mapping</h3>
@@ -797,7 +778,7 @@ function MappingRules() {
             <option value="">Select Category</option>
             {categories.map(c => (
               <option key={c.id} value={c.id}>
-                {c.name}{!mappedCategoryIds.has(String(c.id)) ? ' ⚠️' : ''}
+                {c.name}{!mappedCategoryIds.has(String(c.id)) ? ' ' : ''}
               </option>
             ))}
           </select>
@@ -885,7 +866,7 @@ function UsersManager() {
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium
                       ${u.role === 'admin' ? 'bg-purple-900/40 text-purple-400'
                         : u.role === 'authority' ? 'bg-blue-900/40 text-blue-400'
-                        : 'bg-slate-700 text-slate-300'}`}>
+                          : 'bg-slate-700 text-slate-300'}`}>
                       {u.role}
                     </span>
                   </td>
