@@ -149,10 +149,19 @@ export default function AuthorityDashboard() {
                       {formatDistanceToNow(new Date(r.created_at), { addSuffix: true })}
                     </td>
                     <td className="px-4 py-4">
-                      <Link to={`/reports/${r.id}`}
-                        className="text-xs px-3 py-1.5 bg-blue-700/30 hover:bg-blue-700/50 text-blue-400 rounded-lg transition-colors font-medium">
-                        Review
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link to={`/reports/${r.id}`}
+                          className="text-xs px-3 py-1.5 bg-blue-700/30 hover:bg-blue-700/50 text-blue-400 rounded-lg transition-colors font-medium">
+                          Review
+                        </Link>
+                        {!r.is_anonymous && r.reporter_id && (
+                          <Link to={`/chat/${r.reporter_id}`}
+                            className="text-xs px-3 py-1.5 bg-indigo-700/30 hover:bg-indigo-700/50 text-indigo-400 rounded-lg transition-colors font-medium"
+                            title={`Message ${r.reporter_name}`}>
+                            💬
+                          </Link>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

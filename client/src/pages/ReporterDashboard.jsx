@@ -81,7 +81,15 @@ export default function ReporterDashboard() {
             <h1 className="text-2xl font-semibold text-slate-100">My Reports</h1>
             <p className="text-sm text-slate-500 mt-1">Manage your reports here.</p>
           </div>
-          {user?.role !== 'authority' && <Link to="/reports/new" className="btn-primary text-sm">File New Report</Link>}
+          <div className="flex items-center gap-3">
+            <Link to="/chat" className="text-sm px-3 py-2 rounded border border-white/[0.08] text-slate-300 hover:bg-white/[0.05] transition-colors flex items-center gap-1.5">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              Messages
+            </Link>
+            {user?.role !== 'authority' && <Link to="/reports/new" className="btn-primary text-sm">File New Report</Link>}
+          </div>
         </div>
 
         <div className="flex gap-2 mb-6">
@@ -159,12 +167,21 @@ export default function ReporterDashboard() {
                       </button>
                     )}
                     {!report.is_draft && (
-                      <Link
-                        to={`/reports/${report.id}`}
-                        className="text-xs px-2 py-1 rounded border border-white/[0.08] text-slate-400 hover:bg-white/[0.05] transition-colors"
-                      >
-                        View Details
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          to="/chat"
+                          title="Message authority"
+                          className="text-xs px-2 py-1 rounded border border-white/[0.08] text-slate-400 hover:bg-white/[0.05] transition-colors"
+                        >
+                          💬
+                        </Link>
+                        <Link
+                          to={`/reports/${report.id}`}
+                          className="text-xs px-2 py-1 rounded border border-white/[0.08] text-slate-400 hover:bg-white/[0.05] transition-colors"
+                        >
+                          View Details
+                        </Link>
+                      </div>
                     )}
                   </div>
                 </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { adminAPI, departmentsAPI } from '../services/api';
+import { adminAPI } from '../services/api';
 import Navbar from '../components/Navbar';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -7,8 +7,7 @@ import {
 } from 'recharts';
 import toast from 'react-hot-toast';
 
-const RISK_COLORS = { low: '#22c55e', medium: '#f59e0b', high: '#ef4444' };
-const PRIORITY_COLORS = { critical: '#dc2626', high: '#f97316', medium: '#3b82f6', low: '#6b7280' };
+const PRIORITY_COLORS = { Critical: '#dc2626', High: '#f97316', Medium: '#3b82f6', Low: '#6b7280' };
 const PIE_COLORS = ['#dc2626', '#f97316', '#3b82f6', '#6b7280'];
 
 function RiskBadge({ level }) {
@@ -167,7 +166,14 @@ export default function ComplianceDashboard() {
     );
   }
 
-  const { departments = [], pending_load = [], priority_distribution = [], overall_sla_met_rate, high_risk_count } = data;
+  const {
+    departments = [],
+    pending_load = [],
+    priority_distribution = [],
+    overall_sla_met_rate,
+    high_risk_count,
+    overdue_cases = [],
+  } = data;
 
   // Bar chart data for SLA comparison
   const slaChartData = departments.map(d => ({
@@ -335,6 +341,52 @@ export default function ComplianceDashboard() {
             </div>
           </div>
         </div>
+
+        {/* Overdue / Ignored Cases */}
+        {overdue_cases.length > 0 && (
+          <div className="bg-red-950/30 border border-red-800/40 rounded-lg p-5 mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <h3 className="text-sm font-semibold text-red-400">🚨 Overdue Cases — No activity in 72+ hours</h3>
+              <span className="text-xs px-2 py-0.5 bg-red-900/50 text-red-300 rounded-full">{overdue_cases.length}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-red-900/40 text-xs text-slate-400 uppercase">
+                    <th className="px-3 py-2 text-left">Tracking ID</th>
+                    <th className="px-3 py-2 text-left">Title</th>
+                    <th className="px-3 py-2 text-left hidden md:table-cell">Department</th>
+                    <th className="px-3 py-2 text-left">Priority</th>
+                    <th className="px-3 py-2 text-right">Hours Open</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-red-900/20">
+                  {overdue_cases.map(c => (
+                    <tr key={c.tracking_id} className="hover:bg-red-900/10">
+                      <td className="px-3 py-2 font-mono text-xs text-blue-400">{c.tracking_id}</td>
+                      <td className="px-3 py-2 text-sm text-slate-300 max-w-[200px] truncate">{c.title}</td>
+                      <td className="px-3 py-2 text-xs text-slate-400 hidden md:table-cell">{c.department || 'Unassigned'}</td>
+                      <td className="px-3 py-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium
+                          ${c.priority === 'Critical' ? 'bg-red-900/40 text-red-400'
+                            : c.priority === 'High' ? 'bg-orange-900/40 text-orange-400'
+                            : c.priority === 'Medium' ? 'bg-yellow-900/40 text-yellow-400'
+                            : 'bg-slate-700 text-slate-400'}`}>
+                          {c.priority}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-sm text-red-400 font-medium text-right">
+                        {c.hours_open >= 24
+                          ? `${(c.hours_open / 24).toFixed(1)}d`
+                          : `${c.hours_open}h`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Risk summary cards */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-5">

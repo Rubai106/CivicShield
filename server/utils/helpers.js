@@ -1,5 +1,54 @@
 const { pool } = require('../config/db');
 
+// ── Priority scoring ──────────────────────────────────────────────────────────
+// Values MUST match DB CHECK constraint: 'Low','Medium','High','Critical'
+const CATEGORY_PRIORITY = {
+  'harassment':              'Critical',
+  'cybercrime':              'Critical',
+  'cyber crime':             'Critical',
+  'violence':                'Critical',
+  'safety hazard':           'High',
+  'infrastructure issue':    'Medium',
+  'environmental violation': 'Low',
+  'public nuisance':         'Low',
+};
+
+const CRITICAL_KEYWORDS = [
+  'fire', 'explosion', 'emergency', 'murder', 'rape', 'bomb',
+  'terrorist', 'attack', 'assault', 'kidnap', 'bleeding', 'dead',
+  'fatal', 'danger', 'urgent', 'shooting', 'stabbing', 'hostage',
+];
+
+const HIGH_KEYWORDS = ['fight', 'injured', 'accident', 'collapse', 'flood', 'robbery'];
+
+const PRIORITY_RANK = { Low: 0, Medium: 1, High: 2, Critical: 3 };
+
+const computePriority = async (categoryId, description) => {
+  // Rule 1 — category sets the BASE priority (unknown/missing category → Medium)
+  let base = 'Medium';
+  if (categoryId) {
+    try {
+      const { rows } = await pool.query('SELECT name FROM categories WHERE id = $1', [categoryId]);
+      const mapped = CATEGORY_PRIORITY[rows[0]?.name?.toLowerCase()];
+      if (mapped) base = mapped;
+    } catch { /* non-fatal — keep Medium */ }
+  }
+
+  let rank = PRIORITY_RANK[base];
+
+  // Rule 2 — keywords can only INCREASE priority (Critical > High hierarchy)
+  if (description) {
+    const lower = description.toLowerCase();
+    if (CRITICAL_KEYWORDS.some(kw => lower.includes(kw))) {
+      rank = Math.max(rank, PRIORITY_RANK.Critical);
+    } else if (HIGH_KEYWORDS.some(kw => lower.includes(kw))) {
+      rank = Math.max(rank, PRIORITY_RANK.High);
+    }
+  }
+
+  return Object.keys(PRIORITY_RANK).find(k => PRIORITY_RANK[k] === rank);
+};
+
 const generateTrackingId = () => {
   const year = new Date().getFullYear();
   const random = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -44,4 +93,4 @@ const createNotification = async (userId, title, message, type, reportId) => {
   }
 };
 
-module.exports = { generateTrackingId, autoAssignDepartment, paginate, createNotification };
+module.exports = { generateTrackingId, autoAssignDepartment, paginate, createNotification, computePriority };

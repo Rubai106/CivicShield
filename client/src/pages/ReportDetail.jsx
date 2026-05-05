@@ -92,6 +92,16 @@ export default function ReportDetail() {
     }
   };
 
+  const handlePriorityChange = async (priority) => {
+    try {
+      await reportsAPI.updatePriority(id, { priority });
+      setReport(prev => ({ ...prev, priority }));
+      toast.success(`Priority set to ${priority}`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to update priority');
+    }
+  };
+
   const handleStatusUpdate = async (newStatus) => {
     if (updatingStatus) return;
     setUpdatingStatus(true);
@@ -362,6 +372,33 @@ export default function ReportDetail() {
                 {updatingStatus && (
                   <p className="text-xs text-slate-500 mt-2 text-center">Updating...</p>
                 )}
+              </div>
+            )}
+
+            {/* Priority override — authority & admin */}
+            {(user?.role === 'authority' || user?.role === 'admin') && (
+              <div className="card p-4">
+                <h3 className="font-semibold text-slate-200 mb-1">Priority</h3>
+                <p className="text-xs text-slate-500 mb-3">
+                  Auto-scored on submit. Override if needed.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {['Low', 'Medium', 'High', 'Critical'].map(p => {
+                    const active = report.priority === p;
+                    const colors = {
+                      Low:      active ? 'bg-green-900/40 text-green-400 border border-green-600/40' : 'bg-slate-800 hover:bg-slate-700 text-slate-400',
+                      Medium:   active ? 'bg-yellow-900/40 text-yellow-400 border border-yellow-600/40' : 'bg-slate-800 hover:bg-slate-700 text-slate-400',
+                      High:     active ? 'bg-orange-900/40 text-orange-400 border border-orange-600/40' : 'bg-slate-800 hover:bg-slate-700 text-slate-400',
+                      Critical: active ? 'bg-red-900/40 text-red-400 border border-red-600/40' : 'bg-slate-800 hover:bg-slate-700 text-slate-400',
+                    };
+                    return (
+                      <button key={p} onClick={() => handlePriorityChange(p)} disabled={active}
+                        className={`py-2 text-xs font-medium rounded-lg transition-colors ${colors[p]}`}>
+                        {active ? '✓ ' : ''}{p}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 

@@ -1,95 +1,156 @@
 const express = require('express');
 const router = express.Router();
-const { query } = require('../config/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { query, pool } = require('../config/db');
+const { authenticate } = require('../middleware/auth');
 
-// ===================== CHAT =====================
+router.use(authenticate);
 
-// GET /api/chat/conversations - List conversations
-router.get('/conversations', authenticate, async (req, res) => {
+// Helper: get or create conversation between two users
+// Always store lower id as participant_1 to keep unique constraint consistent
+async function getOrCreateConversation(client, userA, userB) {
+  const p1 = Math.min(userA, userB);
+  const p2 = Math.max(userA, userB);
+
+  const existing = await client.query(
+    'SELECT id FROM conversations WHERE participant_1_id = $1 AND participant_2_id = $2',
+    [p1, p2]
+  );
+  if (existing.rows[0]) return existing.rows[0].id;
+
+  const created = await client.query(
+    `INSERT INTO conversations (participant_1_id, participant_2_id, last_message_at)
+     VALUES ($1, $2, NOW()) RETURNING id`,
+    [p1, p2]
+  );
+  return created.rows[0].id;
+}
+
+// GET /api/chat/contacts — all conversations for current user
+router.get('/contacts', async (req, res) => {
   try {
+    const userId = req.user.id;
     const result = await query(
-      `SELECT DISTINCT ON (partner_id)
-        CASE WHEN cm.sender_id = $1 THEN cm.receiver_id ELSE cm.sender_id END AS partner_id,
-        u.name AS partner_name, u.email AS partner_email, u.role AS partner_role, u.avatar_url,
-        cm.content AS last_message, cm.created_at AS last_message_time,
-        (SELECT COUNT(*) FROM chat_messages WHERE receiver_id = $1 AND sender_id = partner_id AND is_read = false) AS unread_count
-       FROM chat_messages cm
-       JOIN users u ON u.id = CASE WHEN cm.sender_id = $1 THEN cm.receiver_id ELSE cm.sender_id END
-       WHERE cm.sender_id = $1 OR cm.receiver_id = $1
-       ORDER BY partner_id, cm.created_at DESC`,
-      [req.user.id]
+      `SELECT
+         c.id AS conversation_id,
+         CASE WHEN c.participant_1_id = $1 THEN c.participant_2_id ELSE c.participant_1_id END AS partner_id,
+         u.name AS partner_name,
+         u.role AS partner_role,
+         (SELECT dm.content FROM direct_messages dm WHERE dm.conversation_id = c.id ORDER BY dm.created_at DESC LIMIT 1) AS last_message,
+         (SELECT COUNT(*) FROM direct_messages dm WHERE dm.conversation_id = c.id AND dm.sender_id != $1 AND dm.is_read = false) AS unread_count,
+         c.last_message_at
+       FROM conversations c
+       JOIN users u ON u.id = CASE WHEN c.participant_1_id = $1 THEN c.participant_2_id ELSE c.participant_1_id END
+       WHERE c.participant_1_id = $1 OR c.participant_2_id = $1
+       ORDER BY c.last_message_at DESC NULLS LAST`,
+      [userId]
     );
-    res.json({ success: true, data: { conversations: result.rows } });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch conversations.' });
+    return res.json({ success: true, data: { conversations: result.rows } });
+  } catch (err) {
+    console.error('Chat contacts error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch contacts.' });
   }
 });
 
-// GET /api/chat/:partnerId - Get messages with a user
-router.get('/:partnerId', authenticate, async (req, res) => {
+// GET /api/chat/user/:userId — get user info for chat header
+router.get('/user/:userId', async (req, res) => {
   try {
-    const { partnerId } = req.params;
-    const { page = 1, limit = 50 } = req.query;
-    const offset = (page - 1) * limit;
-
-    // Mark messages as read
-    await query(
-      'UPDATE chat_messages SET is_read = true, read_at = NOW() WHERE sender_id = $1 AND receiver_id = $2 AND is_read = false',
-      [partnerId, req.user.id]
-    );
-
     const result = await query(
-      `SELECT cm.*, u.name AS sender_name, u.avatar_url AS sender_avatar
-       FROM chat_messages cm
-       JOIN users u ON u.id = cm.sender_id
-       WHERE (cm.sender_id = $1 AND cm.receiver_id = $2)
-          OR (cm.sender_id = $2 AND cm.receiver_id = $1)
-       ORDER BY cm.created_at DESC
-       LIMIT $3 OFFSET $4`,
-      [req.user.id, partnerId, parseInt(limit), parseInt(offset)]
+      'SELECT id, name, role FROM users WHERE id = $1 AND is_active = true',
+      [req.params.userId]
     );
-
-    res.json({ success: true, data: { messages: result.rows.reverse() } });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch messages.' });
+    if (!result.rows[0]) return res.status(404).json({ success: false, message: 'User not found.' });
+    return res.json({ success: true, data: { user: result.rows[0] } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Failed to fetch user.' });
   }
 });
 
-// POST /api/chat/:partnerId - Send message
-router.post('/:partnerId', authenticate, async (req, res) => {
+// GET /api/chat/conversation/:userId — get message history + mark messages as read
+router.get('/conversation/:userId', async (req, res) => {
+  const client = await pool.connect();
   try {
-    const { partnerId } = req.params;
-    const { content, report_id } = req.body;
+    const myId = req.user.id;
+    const theirId = parseInt(req.params.userId);
 
-    if (!content?.trim()) {
+    const convId = await getOrCreateConversation(client, myId, theirId);
+
+    // Mark their messages to me as read
+    await client.query(
+      `UPDATE direct_messages SET is_read = true
+       WHERE conversation_id = $1 AND sender_id = $2 AND is_read = false`,
+      [convId, theirId]
+    );
+
+    const messages = await client.query(
+      `SELECT dm.id, dm.sender_id, dm.content, dm.is_read, dm.created_at,
+              u.name AS sender_name
+       FROM direct_messages dm
+       JOIN users u ON u.id = dm.sender_id
+       WHERE dm.conversation_id = $1
+       ORDER BY dm.created_at ASC`,
+      [convId]
+    );
+
+    return res.json({ success: true, data: { conversation_id: convId, messages: messages.rows } });
+  } catch (err) {
+    console.error('Get conversation error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to load conversation.' });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/chat/message/:userId — send a message
+router.post('/message/:userId', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const myId = req.user.id;
+    const theirId = parseInt(req.params.userId);
+    const { content } = req.body;
+
+    if (!content || !content.trim()) {
       return res.status(400).json({ success: false, message: 'Message content is required.' });
     }
 
-    const partnerResult = await query('SELECT id, name FROM users WHERE id = $1', [partnerId]);
-    if (!partnerResult.rows[0]) {
-      return res.status(404).json({ success: false, message: 'User not found.' });
-    }
+    // Authority can only message reporters; reporters can only reply to authorities
+    const them = await client.query(
+      'SELECT id, name, role FROM users WHERE id = $1 AND is_active = true',
+      [theirId]
+    );
+    if (!them.rows[0]) return res.status(404).json({ success: false, message: 'User not found.' });
 
-    const result = await query(
-      `INSERT INTO chat_messages (sender_id, receiver_id, content, report_id)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [req.user.id, partnerId, content.trim(), report_id || null]
+    const convId = await getOrCreateConversation(client, myId, theirId);
+
+    const inserted = await client.query(
+      `INSERT INTO direct_messages (conversation_id, sender_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING id, sender_id, content, is_read, created_at`,
+      [convId, myId, content.trim()]
     );
 
-    const message = await query(
-      `SELECT cm.*, u.name AS sender_name, u.avatar_url AS sender_avatar
-       FROM chat_messages cm JOIN users u ON u.id = cm.sender_id WHERE cm.id = $1`,
-      [result.rows[0].id]
+    await client.query(
+      'UPDATE conversations SET last_message_at = NOW() WHERE id = $1',
+      [convId]
     );
 
-    if (req.io) {
-      req.io.to(`user_${partnerId}`).emit('new_message', message.rows[0]);
+    const message = {
+      ...inserted.rows[0],
+      sender_name: req.user.name,
+      receiver_id: theirId,
+    };
+
+    // Emit real-time event to recipient
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user_${theirId}`).emit('new_message', message);
     }
 
-    res.status(201).json({ success: true, data: { message: message.rows[0] } });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to send message.' });
+    return res.status(201).json({ success: true, data: { message } });
+  } catch (err) {
+    console.error('Send message error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to send message.' });
+  } finally {
+    client.release();
   }
 });
 
