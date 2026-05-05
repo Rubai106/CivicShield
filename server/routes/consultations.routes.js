@@ -142,6 +142,35 @@ router.put('/:id/status', authenticate, authorize('authority'), async (req, res)
   }
 });
 
+// ── POST /api/consultations/verify-payment ────────────────────────────────────
+// Called by the client on return from Stripe to confirm payment synchronously
+router.post('/verify-payment', authenticate, authorize('reporter'), async (req, res) => {
+  try {
+    const { session_id } = req.body;
+    if (!session_id) return res.status(400).json({ success: false, message: 'session_id required.' });
+
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    if (session.payment_status !== 'paid') {
+      return res.status(400).json({ success: false, message: 'Payment not completed.' });
+    }
+
+    const consultationId = session.metadata?.consultation_id;
+    if (!consultationId) {
+      return res.status(400).json({ success: false, message: 'No consultation linked to this session.' });
+    }
+
+    await query(
+      `UPDATE consultations SET payment_status = 'Paid' WHERE id = $1 AND reporter_id = $2`,
+      [consultationId, req.user.id]
+    );
+
+    return res.json({ success: true, message: 'Payment verified and recorded.' });
+  } catch (error) {
+    console.error('Verify payment error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to verify payment.' });
+  }
+});
+
 // ── POST /api/consultations/:id/pay ──────────────────────────────────────────
 // Reporter initiates Stripe Checkout Session
 router.post('/:id/pay', authenticate, authorize('reporter'), async (req, res) => {

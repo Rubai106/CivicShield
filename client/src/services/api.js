@@ -140,6 +140,7 @@ export const consultationsAPI = {
   create: (data) => api.post('/consultations', data),
   updateStatus: (id, data) => api.put(`/consultations/${id}/status`, data),
   pay: (id) => api.post(`/consultations/${id}/pay`),
+  verifyPayment: (sessionId) => api.post('/consultations/verify-payment', { session_id: sessionId }),
 };
 
 export default api;
