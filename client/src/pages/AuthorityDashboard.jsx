@@ -27,10 +27,10 @@ export default function AuthorityDashboard() {
   const [filters, setFilters] = useState({ status: '', priority: '', page: 1, search: '' });
   const [totalPages, setTotalPages] = useState(1);
   const [stats, setStats] = useState({ total: 0, pending: 0, critical: 0, resolved: 0 });
-  const [reopenPending, setReopenPending]     = useState([]);
-  const [loadingReopen, setLoadingReopen]     = useState(false);
-  const [decideModal, setDecideModal]         = useState(null);
-  const [decideNote, setDecideNote]           = useState('');
+  const [reopenPending, setReopenPending] = useState([]);
+  const [loadingReopen, setLoadingReopen] = useState(false);
+  const [decideModal, setDecideModal] = useState(null);
+  const [decideNote, setDecideNote] = useState('');
   const [submittingDecide, setSubmittingDecide] = useState(false);
 
   useEffect(() => { fetchReports(); }, [filters]);
@@ -39,7 +39,7 @@ export default function AuthorityDashboard() {
     setLoadingReopen(true);
     reopenAPI.getPending()
       .then(({ data }) => setReopenPending(data.data.requests || []))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoadingReopen(false));
   }, []);
 
@@ -54,7 +54,7 @@ export default function AuthorityDashboard() {
         total: data.data.total || reps.length,
         pending: reps.filter(r => r.status === 'Submitted').length,
         critical: reps.filter(r => r.priority === 'Critical').length,
-        resolved: reps.filter(r => ['Resolved','Closed'].includes(r.status)).length,
+        resolved: reps.filter(r => ['Resolved', 'Closed'].includes(r.status)).length,
       });
     } catch { toast.error('Failed to load reports'); }
     finally { setLoading(false); }
@@ -178,17 +178,18 @@ export default function AuthorityDashboard() {
         )}
 
         {/* Filters */}
-        <div className="flex flex-wrap gap-3 mb-5"> onChange={e => setFilters(p => ({ ...p, search: e.target.value, page: 1 }))}
+        <div className="flex flex-wrap gap-3 mb-5">
+          <input value={filters.search} onChange={e => setFilters(p => ({ ...p, search: e.target.value, page: 1 }))}
             placeholder="Search reports..." className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 w-48" />
           <select value={filters.status} onChange={e => setFilters(p => ({ ...p, status: e.target.value, page: 1 }))}
             className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm">
             <option value="">All Statuses</option>
-            {['Submitted','Under Review','Investigating','Resolved','Closed'].map(s => <option key={s} value={s}>{s}</option>)}
+            {['Submitted', 'Under Review', 'Investigating', 'Resolved', 'Closed'].map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <select value={filters.priority} onChange={e => setFilters(p => ({ ...p, priority: e.target.value, page: 1 }))}
             className="px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm">
             <option value="">All Priorities</option>
-            {['Critical','High','Medium','Low'].map(p => <option key={p} value={p}>{p}</option>)}
+            {['Critical', 'High', 'Medium', 'Low'].map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
 
@@ -274,56 +275,56 @@ export default function AuthorityDashboard() {
         )}
       </div>
 
-    {/* Decide Modal */}
-    {decideModal && (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-        <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md">
-          <h3 className="text-lg font-semibold text-white mb-1">Review Reopen Request</h3>
-          <p className="text-slate-400 text-sm mb-1">
-            <span className="font-medium text-slate-300">{decideModal.reportTitle}</span>
-          </p>
-          <p className="text-slate-500 text-xs mb-4">From: {decideModal.reporterName}</p>
+      {/* Decide Modal */}
+      {decideModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-white mb-1">Review Reopen Request</h3>
+            <p className="text-slate-400 text-sm mb-1">
+              <span className="font-medium text-slate-300">{decideModal.reportTitle}</span>
+            </p>
+            <p className="text-slate-500 text-xs mb-4">From: {decideModal.reporterName}</p>
 
-          <div className="p-3 bg-slate-800 rounded-lg mb-4">
-            <p className="text-xs text-slate-400 font-medium mb-1">Reporter's Reason</p>
-            <p className="text-sm text-slate-300 whitespace-pre-wrap">{decideModal.reason}</p>
-          </div>
+            <div className="p-3 bg-slate-800 rounded-lg mb-4">
+              <p className="text-xs text-slate-400 font-medium mb-1">Reporter's Reason</p>
+              <p className="text-sm text-slate-300 whitespace-pre-wrap">{decideModal.reason}</p>
+            </div>
 
-          <label className="block text-xs text-slate-400 mb-1">Note (optional)</label>
-          <textarea
-            value={decideNote}
-            onChange={e => setDecideNote(e.target.value)}
-            rows={3}
-            maxLength={500}
-            placeholder="Add a note for the reporter..."
-            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none resize-none mb-4"
-          />
+            <label className="block text-xs text-slate-400 mb-1">Note (optional)</label>
+            <textarea
+              value={decideNote}
+              onChange={e => setDecideNote(e.target.value)}
+              rows={3}
+              maxLength={500}
+              placeholder="Add a note for the reporter..."
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 text-sm focus:border-blue-500 focus:outline-none resize-none mb-4"
+            />
 
-          <div className="flex gap-3">
-            <button
-              onClick={() => handleDecide('approved')}
-              disabled={submittingDecide}
-              className="flex-1 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white text-sm rounded-lg font-medium transition-colors"
-            >
-              {submittingDecide ? 'Processing...' : '✓ Approve'}
-            </button>
-            <button
-              onClick={() => handleDecide('denied')}
-              disabled={submittingDecide}
-              className="flex-1 py-2 bg-red-800 hover:bg-red-700 disabled:opacity-40 text-white text-sm rounded-lg font-medium transition-colors"
-            >
-              ✗ Deny
-            </button>
-            <button
-              onClick={() => { setDecideModal(null); setDecideNote(''); }}
-              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleDecide('approved')}
+                disabled={submittingDecide}
+                className="flex-1 py-2 bg-green-700 hover:bg-green-600 disabled:opacity-40 text-white text-sm rounded-lg font-medium transition-colors"
+              >
+                {submittingDecide ? 'Processing...' : '✓ Approve'}
+              </button>
+              <button
+                onClick={() => handleDecide('denied')}
+                disabled={submittingDecide}
+                className="flex-1 py-2 bg-red-800 hover:bg-red-700 disabled:opacity-40 text-white text-sm rounded-lg font-medium transition-colors"
+              >
+                ✗ Deny
+              </button>
+              <button
+                onClick={() => { setDecideModal(null); setDecideNote(''); }}
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    )}
-  </div>
+      )}
+    </div>
   );
 }

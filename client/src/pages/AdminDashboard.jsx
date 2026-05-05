@@ -467,7 +467,7 @@ function MonthlyTrends() {
                     <td className="px-5 py-2 text-sm text-slate-300">{t.month}</td>
                     <td className="px-5 py-2 text-sm text-slate-200 text-right font-medium">{t.count}</td>
                     <td className={`px-5 py-2 text-xs text-right ${diff > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                      {diff > 0 ? '+' : ''}{Math.round(diff)}
+                      {diff > 0 ? '+' : ''} {diff.toFixed(1)}
                     </td>
                   </tr>
                 );
