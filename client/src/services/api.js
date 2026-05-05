@@ -37,6 +37,7 @@ export const authAPI = {
   changePassword: (data) => api.put('/auth/change-password', data),
   onboardAuthority: (data) => api.post('/auth/onboard-authority', data),
   getOnboardingStatus: () => api.get('/auth/onboarding-status'),
+  setAuthorityFee: (data) => api.put('/auth/authority-fee', data),
 };
 
 export const reportsAPI = {
@@ -129,6 +130,14 @@ export const chatAPI = {
   getConversation: (userId) => api.get(`/chat/conversation/${userId}`),
   getUser: (userId) => api.get(`/chat/user/${userId}`),
   sendMessage: (userId, data) => api.post(`/chat/message/${userId}`, data),
+};
+
+export const consultationsAPI = {
+  getAll: () => api.get('/consultations'),
+  getAuthorities: () => api.get('/consultations/authorities'),
+  create: (data) => api.post('/consultations', data),
+  updateStatus: (id, data) => api.put(`/consultations/${id}/status`, data),
+  pay: (id) => api.post(`/consultations/${id}/pay`),
 };
 
 export default api;

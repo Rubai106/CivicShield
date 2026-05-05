@@ -168,7 +168,7 @@ router.post('/:id/pay', authenticate, authorize('reporter'), async (req, res) =>
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
-          currency: 'usd',
+          currency: 'bdt',
           product_data: { name: c.title || 'Consultation' },
           unit_amount: c.amount_cents,
         },
@@ -193,4 +193,38 @@ router.post('/:id/pay', authenticate, authorize('reporter'), async (req, res) =>
   }
 });
 
+// ── POST /api/webhooks/stripe ─────────────────────────────────────────────────
+// Stripe calls this after a successful checkout — marks consultation as Paid
+async function stripeWebhook(req, res) {
+  const sig = req.headers['stripe-signature'];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+  } catch (err) {
+    console.error('Stripe webhook signature error:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const consultationId = session.metadata?.consultation_id;
+    if (consultationId && session.payment_status === 'paid') {
+      try {
+        await query(
+          `UPDATE consultations SET payment_status = 'Paid' WHERE id = $1`,
+          [consultationId]
+        );
+        console.log(`[webhook] Consultation ${consultationId} marked as Paid`);
+      } catch (err) {
+        console.error('[webhook] Failed to update payment_status:', err.message);
+      }
+    }
+  }
+
+  res.json({ received: true });
+}
+
 module.exports = router;
+module.exports.stripeWebhook = stripeWebhook;

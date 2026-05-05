@@ -228,6 +228,26 @@ router.get('/onboarding-status', authenticate, async (req, res) => {
   }
 });
 
+// ── SET CONSULTATION FEE (authority only) ──────────────────────────────────────
+router.put('/authority-fee', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'authority') {
+      return res.status(403).json({ success: false, message: 'Only authority accounts can set a consultation fee.' });
+    }
+    const { fee } = req.body;
+    const cents = Math.round(parseFloat(fee) * 100) || 0;
+    if (cents < 0) return res.status(400).json({ success: false, message: 'Fee cannot be negative.' });
+    await query(
+      'UPDATE authority_profiles SET consultation_fee_cents = $1 WHERE user_id = $2',
+      [cents, req.user.id]
+    );
+    return res.json({ success: true, message: 'Consultation fee updated.' });
+  } catch (error) {
+    console.error('Set authority fee error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update consultation fee.' });
+  }
+});
+
 // ── SUBMIT / UPDATE ONBOARDING ────────────────────────────────────────────────
 router.post('/onboard-authority', authenticate, async (req, res) => {
   try {

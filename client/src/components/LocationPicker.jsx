@@ -162,7 +162,7 @@ export default function LocationPicker({ lat, lng, locationText, onChange }) {
   return (
     <div className="space-y-3">
       {/* Search bar */}
-      <form className="flex gap-2">
+      <div className="flex gap-2">
         <input
           type="text"
           value={searchQuery}
@@ -188,7 +188,7 @@ export default function LocationPicker({ lat, lng, locationText, onChange }) {
         >
           {loadingGeo ? '...' : <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>}
         </button>
-      </form>
+      </div>
 
       {/* Map */}
       <div className="rounded-lg overflow-hidden border border-white/[0.08]" style={{ height: '300px' }}>

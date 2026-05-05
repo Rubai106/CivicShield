@@ -129,14 +129,14 @@ export default function ConsultationsPage() {
                     <p className="text-sm text-slate-400 mt-1">📅 {format(new Date(c.scheduled_at), 'PPP p')}</p>
                   )}
                   {c.notes && <p className="text-sm text-slate-400 mt-1 italic">"{c.notes}"</p>}
-                  {c.amount > 0 && <p className="text-sm text-slate-400 mt-1">💰 ${c.amount}</p>}
+                  {c.amount > 0 && <p className="text-sm text-slate-400 mt-1">💰 ৳{c.amount}</p>}
                 </div>
-                {user?.role === 'reporter' && c.status === 'Confirmed' && c.payment_status === 'Unpaid' && c.amount > 0 && (
+                {user?.role === 'reporter' && (c.status === 'Confirmed' || c.status === 'Completed') && c.payment_status === 'Unpaid' && c.amount > 0 && (
                   <button
                     onClick={() => handlePay(c.id)}
                     disabled={paying === c.id}
                     className="px-4 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg shrink-0 transition-colors">
-                    {paying === c.id ? 'Redirecting…' : '💳 Pay Now'}
+                    {paying === c.id ? 'Redirecting…' : 'Pay Now'}
                   </button>
                 )}
                 {user?.role === 'authority' && c.status === 'Pending' && (
@@ -170,7 +170,7 @@ export default function ConsultationsPage() {
                   <option value="">Select an authority officer...</option>
                   {authorities.map(a => (
                     <option key={a.id} value={a.id}>
-                      {a.name} — {a.department_name}{a.consultation_fee > 0 ? ` ($${Number(a.consultation_fee).toFixed(2)})` : ' (Free)'}
+                      {a.name} — {a.department_name}{a.consultation_fee > 0 ? ` (৳${Number(a.consultation_fee).toFixed(2)})` : ' (Free)'}
                     </option>
                   ))}
                 </select>
@@ -180,7 +180,7 @@ export default function ConsultationsPage() {
                   return sel ? (
                     <p className="mt-2 text-sm text-slate-400">
                       Consultation fee: <span className="text-white font-semibold">
-                        {sel.consultation_fee > 0 ? `$${Number(sel.consultation_fee).toFixed(2)}` : 'Free'}
+                        {sel.consultation_fee > 0 ? `৳${Number(sel.consultation_fee).toFixed(2)}` : 'Free'}
                       </span>
                     </p>
                   ) : null;

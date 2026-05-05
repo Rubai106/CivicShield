@@ -59,7 +59,9 @@ export default function ReportDetail() {
 
     if (socket) {
       socket.emit('join_report', id);
-      socket.on('new_comment', (comment) => setComments(prev => [...prev, comment]));
+      socket.on('new_comment', (comment) => setComments(prev =>
+        prev.some(c => c.id === comment.id) ? prev : [...prev, comment]
+      ));
       socket.on('report_updated', (updated) => setReport(prev => ({ ...prev, ...updated })));
       return () => {
         socket.emit('leave_report', id);
@@ -122,7 +124,9 @@ export default function ReportDetail() {
     setSubmittingComment(true);
     try {
       const { data } = await commentsAPI.create(id, { content: commentText });
-      setComments(prev => [...prev, data.data.comment]);
+      setComments(prev =>
+        prev.some(c => c.id === data.data.comment.id) ? prev : [...prev, data.data.comment]
+      );
       setCommentText('');
     } catch {
       toast.error('Failed to post comment');

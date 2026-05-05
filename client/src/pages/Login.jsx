@@ -72,8 +72,6 @@ export function Login() {
     }
   };
 
-  console.log('Login: Component loaded, handleSubmit function:', typeof handleSubmit);
-
   return (
     <AuthLayout
       title="Welcome back"

@@ -21,6 +21,7 @@ const io = new Server(server, {
   },
 });
 require('./socket/chat.socket')(io);
+global.io = io;
 app.set('io', io);
 
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
@@ -44,6 +45,14 @@ const authLimiter = rateLimit({
 
 app.use('/api', limiter);
 app.use('/api/auth/login', authLimiter);
+
+// ── Stripe webhook (must be raw body, registered BEFORE express.json) ─────────
+app.post(
+  '/api/webhooks/stripe',
+  express.raw({ type: 'application/json' }),
+  require('./routes/consultations.routes').stripeWebhook
+);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -55,6 +64,8 @@ app.use('/api/departments', require('./routes/departments.routes'));
 app.use('/api/admin', require('./routes/admin.routes'));
 app.use('/api/chat', require('./routes/chat.routes'));
 app.use('/api/comments', require('./routes/comments.routes'));
+app.use('/api/notifications', require('./routes/notifications.routes'));
+app.use('/api/consultations', require('./routes/consultations.routes'));
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'CivicShield API is running.' });

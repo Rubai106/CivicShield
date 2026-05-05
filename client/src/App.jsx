@@ -15,6 +15,7 @@ import ProfilePage from './pages/ProfilePage';
 import NotFoundPage from './pages/NotFoundPage';
 import ComplianceDashboard from './pages/ComplianceDashboard';
 import ChatPage from './pages/ChatPage';
+import ConsultationsPage from './pages/ConsultationsPage';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth();
@@ -84,6 +85,11 @@ function AppRoutes() {
       } />
       <Route path="/chat/:userId" element={
         <ProtectedRoute allowedRoles={['reporter', 'authority']}><ChatPage /></ProtectedRoute>
+      } />
+
+      {/* Consultations */}
+      <Route path="/consultations" element={
+        <ProtectedRoute allowedRoles={['reporter', 'authority']}><ConsultationsPage /></ProtectedRoute>
       } />
 
       {/* Profile */}

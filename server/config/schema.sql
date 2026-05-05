@@ -167,6 +167,39 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at  TIMESTAMPTZ   DEFAULT NOW()
 );
 
+-- ── COMMENTS ─────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS comments (
+  id          SERIAL PRIMARY KEY,
+  report_id   INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+  author_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content     TEXT NOT NULL,
+  is_internal BOOLEAN DEFAULT FALSE,
+  parent_id   INTEGER REFERENCES comments(id) ON DELETE CASCADE,
+  is_deleted  BOOLEAN DEFAULT FALSE,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ── CONVERSATIONS ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS conversations (
+  id               SERIAL PRIMARY KEY,
+  participant_1_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  participant_2_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  last_message_at  TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(participant_1_id, participant_2_id)
+);
+
+-- ── DIRECT MESSAGES ───────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id              SERIAL PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content         TEXT NOT NULL,
+  is_read         BOOLEAN DEFAULT FALSE,
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ── Indexes ───────────────────────────────────────────────────────────────────
 
 CREATE INDEX IF NOT EXISTS idx_reports_reporter       ON reports(reporter_id);
@@ -181,6 +214,11 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user     ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor       ON audit_logs(actor_id);
 CREATE INDEX IF NOT EXISTS idx_authority_requests_user   ON authority_review_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_authority_requests_status ON authority_review_requests(status);
+CREATE INDEX IF NOT EXISTS idx_comments_report        ON comments(report_id);
+CREATE INDEX IF NOT EXISTS idx_comments_author        ON comments(author_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_p1       ON conversations(participant_1_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_p2       ON conversations(participant_2_id);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_conv   ON direct_messages(conversation_id);
 
 -- ── Seed data ─────────────────────────────────────────────────────────────────
 
@@ -243,7 +281,7 @@ CREATE INDEX IF NOT EXISTS idx_consultations_status    ON consultations(status);
 
 -- Seed users  (password for all: "password")
 INSERT INTO users (name, email, password_hash, role, is_verified, is_active) VALUES
-  ('Admin',     'admin@civicshield.gov',       '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/RK.PQvSie', 'admin',     TRUE, TRUE),
-  ('Reporter',  'reporter@civicshield.local',  '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/RK.PQvSie', 'reporter',  TRUE, TRUE),
-  ('Authority', 'authority@civicshield.local', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/RK.PQvSie', 'authority', TRUE, TRUE)
+  ('Admin',     'admin@civicshield.gov',       '$2b$12$5j39tLz6zXSop7HCP17A5.0j.GxdDbebyHP0Mr1rz0qvYArfxrxW2', 'admin',     TRUE, TRUE),
+  ('Reporter',  'reporter@civicshield.local',  '$2b$12$5j39tLz6zXSop7HCP17A5.0j.GxdDbebyHP0Mr1rz0qvYArfxrxW2', 'reporter',  TRUE, TRUE),
+  ('Authority', 'authority@civicshield.local', '$2b$12$5j39tLz6zXSop7HCP17A5.0j.GxdDbebyHP0Mr1rz0qvYArfxrxW2', 'authority', TRUE, TRUE)
 ON CONFLICT (email) DO NOTHING;
