@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS authority_profiles (
   is_verified         BOOLEAN       DEFAULT FALSE,
   verified_at         TIMESTAMPTZ,
   verified_by         INTEGER       REFERENCES users(id),
+  consultation_fee_cents INTEGER    NOT NULL DEFAULT 0,
   created_at          TIMESTAMPTZ   DEFAULT NOW(),
   updated_at          TIMESTAMPTZ   DEFAULT NOW()
 );
@@ -218,6 +219,27 @@ ON CONFLICT DO NOTHING;
 INSERT INTO sla_rules (department_id, resolution_days)
 SELECT id, 5 FROM departments
 ON CONFLICT (department_id) DO NOTHING;
+
+-- ── Consultations & Payments ──────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS consultations (
+  id                   SERIAL PRIMARY KEY,
+  reporter_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  authority_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title                VARCHAR(200) NOT NULL DEFAULT 'Consultation Request',
+  description          TEXT,
+  scheduled_at         TIMESTAMPTZ,
+  status               VARCHAR(20) NOT NULL DEFAULT 'Pending'
+                         CHECK (status IN ('Pending','Confirmed','Cancelled','Completed')),
+  payment_status       VARCHAR(20) NOT NULL DEFAULT 'Unpaid'
+                         CHECK (payment_status IN ('Unpaid','Paid','Refunded')),
+  checkout_session_id  VARCHAR(300),
+  amount_cents         INTEGER NOT NULL DEFAULT 0,
+  created_at           TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_consultations_reporter  ON consultations(reporter_id);
+CREATE INDEX IF NOT EXISTS idx_consultations_authority ON consultations(authority_id);
+CREATE INDEX IF NOT EXISTS idx_consultations_status    ON consultations(status);
 
 -- Seed users  (password for all: "password")
 INSERT INTO users (name, email, password_hash, role, is_verified, is_active) VALUES
